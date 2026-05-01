@@ -20,20 +20,40 @@ use crate::table::row::Value;
 // ── REPL ─────────────────────────────────────────────────────────────────
 
 pub struct Repl {
-    executor: Executor,
+    executor:   Executor,
     fts_tables: HashMap<String, FtsTable>,
-    prompt:  &'static str,
-    history: Vec<String>,
+    prompt:     &'static str,
+    history:    Vec<String>,
+    db_path:    Option<String>,
 }
 
 impl Repl {
+    /// 建立記憶體資料庫
     pub fn new() -> Self {
         Repl {
             executor:   Executor::new(),
             fts_tables: HashMap::new(),
             prompt:     "sql5> ",
             history:    Vec::new(),
+            db_path:    None,
         }
+    }
+
+    /// 開啟磁碟資料庫
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        Ok(Repl {
+            executor:   Executor::open(path)?,
+            fts_tables: HashMap::new(),
+            prompt:     "sql5> ",
+            history:    Vec::new(),
+            db_path:    Some(path_str),
+        })
+    }
+
+    /// 關閉資料庫（flush WAL 到磁碟）
+    pub fn close(&mut self) {
+        self.executor.flush();
     }
 
     /// 啟動互動式 REPL（從 stdin 讀取）
@@ -62,7 +82,9 @@ impl Repl {
 
             // 點指令（立即執行，不需要 ;）
             if trimmed.starts_with('.') {
-                self.handle_dot_command(&trimmed);
+                if self.handle_dot_command(&trimmed) {
+                    break;  // quit 命令
+                }
                 buf.clear();
                 continue;
             }
@@ -118,12 +140,12 @@ impl Repl {
 
     // ── 點指令 ────────────────────────────────────────────────────────────
 
-    fn handle_dot_command(&mut self, cmd: &str) {
+    fn handle_dot_command(&mut self, cmd: &str) -> bool {
         let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
         match parts[0] {
             ".quit" | ".exit" | ".q" => {
                 println!("Bye!");
-                std::process::exit(0);
+                return true;
             }
             ".help" | ".h" => self.print_help(),
             ".tables"      => self.cmd_tables(),
@@ -133,6 +155,7 @@ impl Repl {
             ".timing"      => println!("(timing always on)"),
             _ => eprintln!("Unknown command: {}  (type .help for help)", parts[0]),
         }
+        false
     }
 
     fn cmd_tables(&self) {

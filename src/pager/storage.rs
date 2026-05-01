@@ -190,8 +190,8 @@ impl Storage for DiskStorage {
     fn page_count(&self) -> usize { self.page_count }
 
     fn flush(&mut self) {
-        // Checkpoint（如果超過閾值）
-        if self.wal.needs_checkpoint() {
+        // Checkpoint（always checkpoint on explicit flush）
+        if self.wal.frame_count() > 0 {
             let file = &mut self.file;
             let header_offset = HEADER_OFFSET;
             self.wal.checkpoint(|page_id, data| {
@@ -321,5 +321,129 @@ mod tests {
             assert_eq!(store.catalog_root, Some(42));
         }
         cleanup("catroot");
+    }
+}
+
+// ── DynStorage 包裝 ─────────────────────────────────────────────────────────
+// 允許使用 Box<dyn Storage> 與 generic code 搭配
+
+pub struct DynStorage {
+    inner: Box<dyn Storage>,
+}
+
+impl DynStorage {
+    pub fn new(inner: Box<dyn Storage>) -> Self {
+        DynStorage { inner }
+    }
+
+    pub fn memory() -> Self {
+        DynStorage { inner: Box::new(MemoryStorage::new()) }
+    }
+
+    pub fn disk<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        Ok(DynStorage { inner: Box::new(DiskStorage::open(path)?) })
+    }
+}
+
+impl Storage for DynStorage {
+    fn read_node(&mut self, page_id: usize) -> Node {
+        self.inner.read_node(page_id)
+    }
+
+    fn write_node(&mut self, page_id: usize, node: &Node) {
+        self.inner.write_node(page_id, node);
+    }
+
+    fn alloc_page(&mut self) -> usize {
+        self.inner.alloc_page()
+    }
+
+    fn page_count(&self) -> usize {
+        self.inner.page_count()
+    }
+
+    fn flush(&mut self) {
+        self.inner.flush()
+    }
+
+    fn begin_txn(&mut self) {
+        self.inner.begin_txn()
+    }
+
+    fn commit_txn(&mut self) {
+        self.inner.commit_txn()
+    }
+
+    fn rollback_txn(&mut self) {
+        self.inner.rollback_txn()
+    }
+}
+
+// ── SharedStorage 包裝 ──────────────────────────────────────────────────────
+// 使用 Arc<Mutex<T>> 讓多個 B+Tree 可以安全地共用同一個 storage
+
+use std::sync::{Arc, Mutex};
+
+pub struct SharedStorage {
+    inner: Arc<Mutex<Box<dyn Storage>>>,
+}
+
+impl SharedStorage {
+    pub fn new(inner: Box<dyn Storage>) -> Self {
+        SharedStorage { inner: Arc::new(Mutex::new(inner)) }
+    }
+
+    pub fn memory() -> Self {
+        SharedStorage { inner: Arc::new(Mutex::new(Box::new(MemoryStorage::new()))) }
+    }
+
+    pub fn disk<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(DiskStorage::open(path)?))) })
+    }
+
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Storage>> {
+        self.inner.lock().expect("Storage lock poisoned")
+    }
+}
+
+impl Storage for SharedStorage {
+    fn read_node(&mut self, page_id: usize) -> Node {
+        self.inner.lock().expect("Storage lock poisoned").read_node(page_id)
+    }
+
+    fn write_node(&mut self, page_id: usize, node: &Node) {
+        self.inner.lock().expect("Storage lock poisoned").write_node(page_id, node);
+    }
+
+    fn alloc_page(&mut self) -> usize {
+        self.inner.lock().expect("Storage lock poisoned").alloc_page()
+    }
+
+    fn page_count(&self) -> usize {
+        self.inner.lock().expect("Storage lock poisoned").page_count()
+    }
+
+    fn flush(&mut self) {
+        let mut inner = self.inner.lock().expect("Storage lock poisoned");
+        inner.flush();
+    }
+
+    fn begin_txn(&mut self) {
+        self.inner.lock().expect("Storage lock poisoned").begin_txn();
+    }
+
+    fn commit_txn(&mut self) {
+        self.inner.lock().expect("Storage lock poisoned").commit_txn();
+    }
+
+    fn rollback_txn(&mut self) {
+        self.inner.lock().expect("Storage lock poisoned").rollback_txn();
+    }
+}
+
+// 讓 SharedStorage 可以 clone（共享底層）
+impl Clone for SharedStorage {
+    fn clone(&self) -> Self {
+        SharedStorage { inner: self.inner.clone() }
     }
 }

@@ -235,6 +235,11 @@ impl Wal {
         self.frame_count >= CHECKPOINT_THRESHOLD
     }
 
+    /// 回傳目前的 frame 數量
+    pub fn frame_count(&self) -> usize {
+        self.frame_count
+    }
+
     /// Checkpoint：把所有已提交頁面寫回主檔，然後截斷 WAL
     /// `write_back`：一個 closure，負責把 page_data 寫回主檔的對應位置
     pub fn checkpoint<F>(&mut self, mut write_back: F) -> std::io::Result<()>
