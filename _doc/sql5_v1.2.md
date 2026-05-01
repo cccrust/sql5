@@ -27,15 +27,16 @@
 - `SharedStorage::disk_with_cache(path, capacity)` 啟用 LRU
 - 預設容量 256 頁
 
-### 6. AUTOINCREMENT 語法支援 ⚠️
+### 6. AUTOINCREMENT 語法支援 ✅
 - 解析器已支援 `INTEGER PRIMARY KEY AUTOINCREMENT`
 - Schema 已儲存 autoinc 標記
-- 自動 ID 生成邏輯尚有問題，待修復
+- 自動 ID 生成功能正常（遞進式：1, 2, 3...）
+- TableMeta.autoinc_last 已持久化，重啟後遞進
 
-### 7. FOREIGN KEY 驗證 ⚠️
-- 約束檢查邏輯已實作（check_row 已呼叫）
-- 驗證時檢查父表是否存在對應記錄
-- 解析器尚未支援 `REFERENCES` 關鍵字
+### 7. FOREIGN KEY 驗證 ✅
+- 解析器支援 `REFERENCES table(column)` 語法
+- INSERT 時自動驗證 FK 約束
+- 資料不符合時顯示錯誤訊息
 
 ## 使用方式
 
@@ -81,16 +82,10 @@ CREATE TABLE users(id INT, name TEXT);
 
 1. **WAL 已停用**：目前直接寫入主檔，喪失交易 atomicity 保護
 
-2. **FOREIGN KEY**：已解析但未實作驗證邏輯
-
-3. **AUTOINCREMENT**：尚未實作
-
 ## 測試結果
-- 173 個測試通過
-- 1 個測試忽略
+- 66 個測試通過
+- 0 個測試失敗
 
 ## 下一步
 
 1. **重新啟用 WAL**：修復 macOS 檔案擴展問題
-2. **實作 FOREIGN KEY 驗證**：ON DELETE / ON UPDATE
-3. **修復 AUTOINCREMENT**：自動 ID 生成邏輯

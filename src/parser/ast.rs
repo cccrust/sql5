@@ -139,6 +139,7 @@ pub enum ColumnConstraint {
     PrimaryKey { autoincrement: bool },
     Unique,
     Default(Expr),
+    References { table: String, column: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

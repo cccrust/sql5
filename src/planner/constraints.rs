@@ -139,6 +139,14 @@ pub fn constraints_from_ast(
                     tc.add(Constraint::NotNull { column: col.name.clone() });
                 }
                 ColumnConstraint::Default(_) => {} // 預設值由 executor 處理
+                ColumnConstraint::References { table, column } => {
+                    let ref_col = column.clone().unwrap_or_else(|| "id".to_string());
+                    tc.add(Constraint::ForeignKey {
+                        columns: vec![col.name.clone()],
+                        ref_table: table.clone(),
+                        ref_columns: vec![ref_col],
+                    });
+                }
             }
         }
     }

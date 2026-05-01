@@ -358,6 +358,20 @@ impl Parser {
                     cons.push(ColumnConstraint::PrimaryKey { autoincrement });
                 }
                 Token::Unique => { self.advance(); cons.push(ColumnConstraint::Unique); }
+                Token::References => {
+                    self.advance();
+                    let table = self.eat_ident()?;
+                    // 處理可選的欄位名：REFERENCES table(column)
+                    let column = if matches!(self.peek(), Token::LParen) {
+                        self.advance(); // (
+                        let col = self.eat_ident()?;
+                        self.eat(&Token::RParen)?;
+                        Some(col)
+                    } else {
+                        None
+                    };
+                    cons.push(ColumnConstraint::References { table, column });
+                }
                 _ => break,
             }
         }

@@ -351,57 +351,44 @@ impl Executor {
                 .map(eval_literal)
                 .collect::<Result<_, String>>()?;
 
-            // 處理 AUTOINCREMENT
+            // 處理 AUTOINCREMENT - 只計算需要多少空間
+            let mut autoinc_value: Option<i64> = None;
             if let Some(idx) = autoinc_col_idx {
                 let need_autoinc = if columns.is_empty() {
-                    // 無指定欄位時，需要足夠的 NULL
                     idx >= vals.len() || vals.get(idx) == Some(&Value::Null)
                 } else {
-                    // 有指定欄位時，檢查是否提供了值
                     !columns.iter().any(|c| meta.schema.index_of(c) == Some(idx))
                 };
-
                 if need_autoinc {
-                    // 生成下一個 ID
                     meta.autoinc_last += 1;
-                    let new_id = meta.autoinc_last;
-                    
-                    // 確保 vals 有足夠空間
-                    if vals.len() <= idx {
-                        vals.resize(idx + 1, Value::Null);
-                    }
-                    vals[idx] = Value::Integer(new_id as i64);
+                    autoinc_value = Some(meta.autoinc_last as i64);
                 }
             }
 
+            // 對於無指定欄位的情況，需要擴展 vals 以匹配 schema
             let mut row = if columns.is_empty() {
+                // 無指定欄位時，確保 vals 足夠長
+                if let Some(v) = autoinc_value {
+                    if vals.len() <= autoinc_col_idx.unwrap() {
+                        vals.resize(autoinc_col_idx.unwrap() + 1, Value::Null);
+                    }
+                    vals[autoinc_col_idx.unwrap()] = Value::Integer(v);
+                }
                 Row::new(vals)
             } else {
+                // 有指定欄位時，逐一對應
                 let mut rv = vec![Value::Null; meta.schema.columns.len()];
                 for (col, val) in columns.iter().zip(vals) {
                     let idx = meta.schema.index_of(col)
                         .ok_or_else(|| format!("column '{}' not found", col))?;
                     rv[idx] = val;
                 }
+                // AUTOINCREMENT 欄位單獨設定
+                if let Some(v) = autoinc_value {
+                    rv[autoinc_col_idx.unwrap()] = Value::Integer(v);
+                }
                 Row::new(rv)
             };
-
-            // TODO: AUTOINCREMENT 尚未正確運作
-            // if let Some(idx) = autoinc_col_idx {
-            //     let need_autoinc = if columns.is_empty() {
-            //         idx >= row.values.len() || row.values.get(idx) == Some(&Value::Null)
-            //     } else {
-            //         !columns.iter().any(|c| meta.schema.index_of(c) == Some(idx))
-            //     };
-            //     if need_autoinc {
-            //         meta.autoinc_last += 1;
-            //         let new_id = meta.autoinc_last;
-            //         if row.values.len() <= idx {
-            //             row.values.resize(idx + 1, Value::Null);
-            //         }
-            //         row.values[idx] = Value::Integer(new_id as i64);
-            //     }
-            // }
 
             // FOREIGN KEY 驗證 - 先收集需要檢查的 FK 資訊
             let fk_checks: Vec<(Vec<String>, String, Vec<String>)> = if let Some(tc) = self.constraints.get(&table) {
@@ -469,31 +456,20 @@ impl Executor {
                 }
             }
 
-            // 約束檢查
+            // 約束檢查（使用當前 meta，不要重新 clone）
             if let Some(tc) = self.constraints.get(&table) {
                 let existing = self.tables.get_mut(&table)
                     .map(|t| t.scan()).unwrap_or_default();
-                let meta = self.catalog.get_table(&table).cloned();
-                if let Some(meta) = meta {
-                    crate::planner::constraints::check_row(&row, &meta.schema, tc, &existing)
-                        .map_err(|e| e)?;
-                }
+                crate::planner::constraints::check_row(&row, &meta.schema, tc, &existing)
+                    .map_err(|e| e)?;
             }
             self.get_table(&table)?.insert(row)?;
         }
 
         // 更新 catalog 中的 autoinc_last
-        self.catalog.update_table_meta(&table, meta.root_page, meta.row_count)?;
-
-        // 同步更新 catalog 中的 autoinc_last
         let root = self.tables[&table].root_page();
         let new_count = self.tables[&table].len();
-        self.catalog.update_table_meta(&table, root, new_count)?;
-        
-        // 更新 autoinc_last
-        if let Some(m) = self.catalog.get_table_mut(&table) {
-            m.autoinc_last = meta.autoinc_last;
-        }
+        self.catalog.update_table_meta_full(&table, root, new_count, Some(meta.autoinc_last))?;
 
         Ok(ResultSet::ok_msg(&format!("{} row(s) inserted", count)))
     }

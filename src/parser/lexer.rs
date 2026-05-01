@@ -19,6 +19,7 @@ pub enum Token {
     Begin, Commit, Rollback, Transaction,
     Virtual, Match,  // FTS5
     With, Recursive,  // CTE
+    References,  // FOREIGN KEY
     KwInteger, KwText,       // 型別關鍵字
     Real, Blob, Boolean,
     True, False,
@@ -77,6 +78,7 @@ fn keyword(s: &str) -> Option<Token> {
         "ON"          => Some(Token::On),
         "PRIMARY"     => Some(Token::Primary),
         "KEY"         => Some(Token::Key),
+        "REFERENCES"  => Some(Token::References),
         "NOT"         => Some(Token::Not),
         "NULL"        => Some(Token::LitNull),
         "UNIQUE"      => Some(Token::Unique),

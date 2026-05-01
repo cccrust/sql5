@@ -75,10 +75,18 @@ impl<S: Storage> Catalog<S> {
 
     /// 更新資料表的 root_page 與 row_count（Table 初始化後呼叫）
     pub fn update_table_meta(&mut self, name: &str, root_page: usize, row_count: usize) -> Result<(), String> {
+        self.update_table_meta_full(name, root_page, row_count, None)
+    }
+
+    /// 更新資料表（含 autoinc_last）
+    pub fn update_table_meta_full(&mut self, name: &str, root_page: usize, row_count: usize, autoinc_last: Option<u64>) -> Result<(), String> {
         let meta = self.cache.get_mut(name)
             .ok_or_else(|| format!("table '{}' not found", name))?;
         meta.root_page = root_page;
         meta.row_count = row_count;
+        if let Some(v) = autoinc_last {
+            meta.autoinc_last = v;
+        }
         let meta_clone = meta.clone();
         self.persist_meta(&meta_clone);
         Ok(())
