@@ -344,6 +344,21 @@ OUT=$(run_sql \
     "SELECT LOWER(name) FROM t;")
 assert_contains "LOWER()" "alice" "$OUT"
 
+# ── 9b. 日期時間函式 ───────────────────────────────────────────────────────
+section "Date/Time Functions"
+
+OUT=$(run_sql "SELECT date('2024-03-15', '+5 days');")
+assert_contains "DATE with modifier" "2024-03-20" "$OUT"
+
+OUT=$(run_sql "SELECT datetime('now');")
+assert_contains "DATETIME" "2026" "$OUT"
+
+OUT=$(run_sql "SELECT julianday('2024-03-15');")
+assert_contains "JULIANDAY" "24603" "$OUT"
+
+OUT=$(run_sql "SELECT strftime('%Y/%m/%d', '2024-03-15');")
+assert_contains "STRFTIME" "2024/03/15" "$OUT"
+
 # ── 10. 點指令 ────────────────────────────────────────────────────────────
 section "Dot Commands"
 
