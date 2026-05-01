@@ -1,2 +1,2 @@
 # sql5
-A minimalist sql database just like sqlite (in rust)
+A rust database just like sqlite, support CJK fulltext retrieval.
