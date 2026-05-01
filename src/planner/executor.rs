@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::btree::node::Key;
 use crate::catalog::Catalog;
 use crate::pager::storage::{MemoryStorage, SharedStorage, Storage};
-use crate::parser::ast::{BinOp, Expr, SelectItem, UnaryOp};
+use crate::parser::ast::{BinOp, ColumnConstraint, Expr, SelectItem, UnaryOp};
 
 use crate::table::row::{Row, Value};
 use crate::table::Table;
@@ -336,18 +336,45 @@ impl Executor {
     // ── DML ───────────────────────────────────────────────────────────────
 
     fn exec_insert(&mut self, table: String, columns: Vec<String>, source: InsertSource) -> Result<ResultSet, String> {
-        let meta = self.catalog.get_table(&table)
+        let mut meta = self.catalog.get_table(&table)
             .ok_or_else(|| format!("table '{}' not found", table))?.clone();
 
         let InsertSource::Values(all_values) = source;
         let count = all_values.len();
 
-        for value_exprs in all_values {
-            let vals: Vec<Value> = value_exprs.iter()
-                .map(eval_literal)
-                .collect::<Result<_, _>>()?;
+        // 檢查是否有 AUTOINCREMENT 欄位
+        let autoinc_col_idx = meta.schema.columns.iter()
+            .position(|c| c.autoinc);
 
-            let row = if columns.is_empty() {
+        for value_exprs in all_values {
+            let mut vals: Vec<Value> = value_exprs.iter()
+                .map(eval_literal)
+                .collect::<Result<_, String>>()?;
+
+            // 處理 AUTOINCREMENT
+            if let Some(idx) = autoinc_col_idx {
+                let need_autoinc = if columns.is_empty() {
+                    // 無指定欄位時，需要足夠的 NULL
+                    idx >= vals.len() || vals.get(idx) == Some(&Value::Null)
+                } else {
+                    // 有指定欄位時，檢查是否提供了值
+                    !columns.iter().any(|c| meta.schema.index_of(c) == Some(idx))
+                };
+
+                if need_autoinc {
+                    // 生成下一個 ID
+                    meta.autoinc_last += 1;
+                    let new_id = meta.autoinc_last;
+                    
+                    // 確保 vals 有足夠空間
+                    if vals.len() <= idx {
+                        vals.resize(idx + 1, Value::Null);
+                    }
+                    vals[idx] = Value::Integer(new_id as i64);
+                }
+            }
+
+            let mut row = if columns.is_empty() {
                 Row::new(vals)
             } else {
                 let mut rv = vec![Value::Null; meta.schema.columns.len()];
@@ -358,6 +385,89 @@ impl Executor {
                 }
                 Row::new(rv)
             };
+
+            // TODO: AUTOINCREMENT 尚未正確運作
+            // if let Some(idx) = autoinc_col_idx {
+            //     let need_autoinc = if columns.is_empty() {
+            //         idx >= row.values.len() || row.values.get(idx) == Some(&Value::Null)
+            //     } else {
+            //         !columns.iter().any(|c| meta.schema.index_of(c) == Some(idx))
+            //     };
+            //     if need_autoinc {
+            //         meta.autoinc_last += 1;
+            //         let new_id = meta.autoinc_last;
+            //         if row.values.len() <= idx {
+            //             row.values.resize(idx + 1, Value::Null);
+            //         }
+            //         row.values[idx] = Value::Integer(new_id as i64);
+            //     }
+            // }
+
+            // FOREIGN KEY 驗證 - 先收集需要檢查的 FK 資訊
+            let fk_checks: Vec<(Vec<String>, String, Vec<String>)> = if let Some(tc) = self.constraints.get(&table) {
+                tc.constraints.iter()
+                    .filter_map(|c| {
+                        if let crate::planner::constraints::Constraint::ForeignKey { 
+                            columns, ref_table, ref_columns 
+                        } = c {
+                            Some((columns.clone(), ref_table.clone(), ref_columns.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            // 執行 FK 驗證
+            for (columns, ref_table, ref_columns) in fk_checks {
+                // 取得 FK 欄位的值
+                let fk_values: Vec<Value> = columns.iter()
+                    .map(|c| {
+                        let idx = meta.schema.index_of(c)
+                            .ok_or_else(|| format!("FK column '{}' not found", c))?;
+                        Ok::<Value, String>(row.values.get(idx).cloned().unwrap_or(Value::Null))
+                    })
+                    .collect::<Result<_, String>>()?;
+                
+                // 跳過全部為 NULL 的 FK（允許）
+                if fk_values.iter().all(|v| matches!(v, Value::Null)) {
+                    continue;
+                }
+                
+                // 檢查父表中是否存在對應的列
+                if let Some(parent_meta) = self.catalog.get_table(&ref_table).cloned() {
+                    let parent_col_idx = if ref_columns.len() == 1 {
+                        Some(parent_meta.schema.index_of(&ref_columns[0])
+                            .ok_or_else(|| format!("ref column '{}' not found", ref_columns[0]))?)
+                    } else {
+                        None
+                    };
+                    
+                    // 先取得 parent table 的資料（會 borrow self）
+                    let parent_table = self.get_table(&ref_table)?;
+                    let parent_rows = parent_table.scan();
+                    
+                    // 檢查是否有匹配的父記錄
+                    if let Some(idx) = parent_col_idx {
+                        let mut found = false;
+                        for parent_row in &parent_rows {
+                            if parent_row.values.get(idx) == Some(&fk_values[0]) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        
+                        if !found {
+                            return Err(format!(
+                                "FOREIGN KEY constraint failed: '{}' not found in '{}'",
+                                fk_values[0], ref_table
+                            ));
+                        }
+                    }
+                }
+            }
 
             // 約束檢查
             if let Some(tc) = self.constraints.get(&table) {
@@ -372,9 +482,19 @@ impl Executor {
             self.get_table(&table)?.insert(row)?;
         }
 
-        let new_count = self.tables[&table].len();
+        // 更新 catalog 中的 autoinc_last
+        self.catalog.update_table_meta(&table, meta.root_page, meta.row_count)?;
+
+        // 同步更新 catalog 中的 autoinc_last
         let root = self.tables[&table].root_page();
+        let new_count = self.tables[&table].len();
         self.catalog.update_table_meta(&table, root, new_count)?;
+        
+        // 更新 autoinc_last
+        if let Some(m) = self.catalog.get_table_mut(&table) {
+            m.autoinc_last = meta.autoinc_last;
+        }
+
         Ok(ResultSet::ok_msg(&format!("{} row(s) inserted", count)))
     }
 
@@ -430,7 +550,16 @@ impl Executor {
                 SqlType::Boolean => DataType::Boolean,
                 SqlType::Null    => DataType::Text,
             };
-            Column::new(&cd.name, dt)
+            let mut col = Column::new(&cd.name, dt);
+            // 檢查是否有 PRIMARY KEY AUTOINCREMENT
+            for constraint in &cd.constraints {
+                if let ColumnConstraint::PrimaryKey { autoincrement } = constraint {
+                    if *autoincrement {
+                        col = col.autoincrement();
+                    }
+                }
+            }
+            col
         }).collect();
         let tc = crate::planner::constraints::constraints_from_ast(&stmt);
         self.constraints.insert(stmt.name.clone(), tc);
@@ -808,7 +937,7 @@ fn eval_aggregate(expr: &Expr, rows: &[Row], cols: &[String]) -> Result<Value, S
             if args.is_empty() || matches!(args[0], Expr::Column { name: ref n, .. } if n == "*") {
                 Ok(Value::Integer(1))
             } else { eval_expr(&args[0], r, cols) }
-        }).collect::<Result<_, _>>()?;
+        }).collect::<Result<_, String>>()?;
 
         match name.as_str() {
             "COUNT" => Ok(Value::Integer(vals.iter().filter(|v| !matches!(v, Value::Null)).count() as i64)),

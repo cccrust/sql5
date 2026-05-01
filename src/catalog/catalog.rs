@@ -89,6 +89,11 @@ impl<S: Storage> Catalog<S> {
         self.cache.get(name)
     }
 
+    /// 取得可變參照
+    pub fn get_table_mut(&mut self, name: &str) -> Option<&mut TableMeta> {
+        self.cache.get_mut(name)
+    }
+
     /// 刪除資料表；找不到回傳 Err
     pub fn drop_table(&mut self, name: &str) -> Result<(), String> {
         if self.cache.remove(name).is_none() {

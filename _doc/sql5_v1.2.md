@@ -27,6 +27,16 @@
 - `SharedStorage::disk_with_cache(path, capacity)` 啟用 LRU
 - 預設容量 256 頁
 
+### 6. AUTOINCREMENT 語法支援 ⚠️
+- 解析器已支援 `INTEGER PRIMARY KEY AUTOINCREMENT`
+- Schema 已儲存 autoinc 標記
+- 自動 ID 生成邏輯尚有問題，待修復
+
+### 7. FOREIGN KEY 驗證 ⚠️
+- 約束檢查邏輯已實作（check_row 已呼叫）
+- 驗證時檢查父表是否存在對應記錄
+- 解析器尚未支援 `REFERENCES` 關鍵字
+
 ## 使用方式
 
 ```bash
@@ -83,4 +93,4 @@ CREATE TABLE users(id INT, name TEXT);
 
 1. **重新啟用 WAL**：修復 macOS 檔案擴展問題
 2. **實作 FOREIGN KEY 驗證**：ON DELETE / ON UPDATE
-3. **實作 AUTOINCREMENT**：sqlite_sequence
+3. **修復 AUTOINCREMENT**：自動 ID 生成邏輯

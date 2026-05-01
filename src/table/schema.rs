@@ -23,18 +23,24 @@ impl std::fmt::Display for DataType {
 /// 單一欄位定義
 #[derive(Debug, Clone)]
 pub struct Column {
-    pub name:     String,
-    pub data_type: DataType,
-    pub nullable: bool,
+    pub name:        String,
+    pub data_type:   DataType,
+    pub nullable:    bool,
+    pub autoinc:     bool,
 }
 
 impl Column {
     pub fn new(name: &str, data_type: DataType) -> Self {
-        Column { name: name.to_string(), data_type, nullable: true }
+        Column { name: name.to_string(), data_type, nullable: true, autoinc: false }
     }
 
     pub fn not_null(mut self) -> Self {
         self.nullable = false;
+        self
+    }
+
+    pub fn autoincrement(mut self) -> Self {
+        self.autoinc = true;
         self
     }
 }

@@ -5,15 +5,16 @@ use crate::table::schema::{Column, DataType, Schema};
 /// 資料庫中一張表的完整描述
 #[derive(Debug, Clone)]
 pub struct TableMeta {
-    pub name:      String,
-    pub schema:    Schema,
-    pub root_page: usize,  // B+Tree 根節點的頁號
-    pub row_count: usize,  // 目前的資料筆數
+    pub name:        String,
+    pub schema:      Schema,
+    pub root_page:   usize,
+    pub row_count:   usize,
+    pub autoinc_last: u64,
 }
 
 impl TableMeta {
     pub fn new(name: &str, schema: Schema, root_page: usize) -> Self {
-        TableMeta { name: name.to_string(), schema, root_page, row_count: 0 }
+        TableMeta { name: name.to_string(), schema, root_page, row_count: 0, autoinc_last: 0 }
     }
 }
 
@@ -45,11 +46,13 @@ pub fn encode_meta(meta: &TableMeta) -> Vec<u8> {
         encode_str(&mut buf, &col.name);
         buf.push(datatype_tag(&col.data_type));
         buf.push(col.nullable as u8);
+        buf.push(col.autoinc as u8);
     }
 
-    // root_page + row_count
+    // root_page + row_count + autoinc_last
     buf.extend_from_slice(&(meta.root_page as u32).to_le_bytes());
     buf.extend_from_slice(&(meta.row_count  as u32).to_le_bytes());
+    buf.extend_from_slice(&meta.autoinc_last.to_le_bytes());
     buf
 }
 
@@ -70,16 +73,21 @@ pub fn decode_meta(bytes: &[u8]) -> TableMeta {
         cur += 1;
         let nullable = bytes[cur] != 0;
         cur += 1;
+        let autoinc = bytes[cur] != 0;
+        cur += 1;
         let mut col = Column::new(&col_name, dt);
         col.nullable = nullable;
+        col.autoinc = autoinc;
         columns.push(col);
     }
 
     let root_page = u32::from_le_bytes(bytes[cur..cur+4].try_into().unwrap()) as usize;
     cur += 4;
     let row_count  = u32::from_le_bytes(bytes[cur..cur+4].try_into().unwrap()) as usize;
+    cur += 4;
+    let autoinc_last = u64::from_le_bytes(bytes[cur..cur+8].try_into().unwrap());
 
-    TableMeta { name, schema: Schema::new(columns), root_page, row_count }
+    TableMeta { name, schema: Schema::new(columns), root_page, row_count, autoinc_last }
 }
 
 // ---- helpers ----
