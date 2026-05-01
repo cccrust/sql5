@@ -10,7 +10,7 @@
 ### 1. Catalog 持久化 ✅
 - Table schemas 在重啟後會恢復
 - 使用 `SharedStorage` (Arc<Mutex<>>) 讓 Catalog 與 Tables 共享儲存
-- 解決了 Rust Mutex deadlock 問題（釋放 lock 後再使用 storage）
+- 解決了 Rust Mutex deadlock 問題
 
 ### 2. Row 資料持久化 ✅
 - Table 的 row 資料在重啟後會恢復
@@ -19,15 +19,13 @@
 
 ### 3. MemoryStorage 改進
 - 內部使用 `Arc<Mutex<MemoryInner>>` 實現 Cloneable
-- 多個 B+Tree 可以安全共享同一個 MemoryStorage
 
 ### 4. DiskStorage 直接寫入
-- 使用直接寫入主檔（`.sql5db`）而非 WAL
-- 避免 macOS 上 WAL 檔案擴展問題
+- 使用直接寫入主檔（`.sql5db`）
 
-### 5. LRU 快取
-- `LruCacheStorage<S>` 包裝任何 Storage 後端
-- 預設容量 256 頁，可自訂
+### 5. LRU 快取已啟用 ✅
+- `SharedStorage::disk_with_cache(path, capacity)` 啟用 LRU
+- 預設容量 256 頁
 
 ## 使用方式
 
@@ -71,19 +69,18 @@ CREATE TABLE users(id INT, name TEXT);
 
 ## 已知限制
 
-1. **WAL 已停用**：目前直接寫入主檔
-   - 喪失交易 atomicity 保護
-   - 未來可重新啟用 WAL（需修復 macOS 檔案擴展問題）
+1. **WAL 已停用**：目前直接寫入主檔，喪失交易 atomicity 保護
 
-2. **LRU 快取**：已實作但預設未啟用
+2. **FOREIGN KEY**：已解析但未實作驗證邏輯
+
+3. **AUTOINCREMENT**：尚未實作
 
 ## 測試結果
 - 173 個測試通過
-- 1 個測試忽略（WAL transaction 相關）
+- 1 個測試忽略
 
 ## 下一步
 
 1. **重新啟用 WAL**：修復 macOS 檔案擴展問題
-2. **啟用 LRU 快取**：在 DiskStorage 上啟用
-3. **外鍵約束**：FOREIGN KEY 驗證
-4. **AUTOINCREMENT**：sqlite_sequence 追蹤
+2. **實作 FOREIGN KEY 驗證**：ON DELETE / ON UPDATE
+3. **實作 AUTOINCREMENT**：sqlite_sequence

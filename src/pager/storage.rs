@@ -313,7 +313,10 @@ impl Storage for DiskStorage {
 
     fn write_node(&mut self, page_id: usize, node: &Node) {
         let buf = encode_node(node);
-        self.wal.write_page(page_id as u32, buf);
+        // 直接寫入主檔（穩定）
+        let offset = Self::page_offset(page_id);
+        self.file.seek(SeekFrom::Start(offset)).unwrap();
+        self.file.write_all(&buf).unwrap();
     }
 
     fn alloc_page(&mut self) -> usize {
@@ -614,6 +617,13 @@ impl SharedStorage {
 
     pub fn disk<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(DiskStorage::open(path)?))) })
+    }
+
+    /// 開啟磁碟資料庫並啟用 LRU 快取
+    pub fn disk_with_cache<P: AsRef<Path>>(path: P, capacity: usize) -> std::io::Result<Self> {
+        let disk = DiskStorage::open(path)?;
+        let cached = LruCacheStorage::new(disk, capacity);
+        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(cached))) })
     }
 
     pub fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Storage>> {

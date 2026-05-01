@@ -71,7 +71,8 @@ impl Executor {
     }
 
     pub fn with_disk(path: &str) -> std::io::Result<Self> {
-        let storage = SharedStorage::disk(path)?;
+        // 使用 LRU 快取（256 頁容量）
+        let storage = SharedStorage::disk_with_cache(path, 256)?;
         
         // 先釋放 lock 再使用 storage（避免 deadlock）
         let root = storage.lock().catalog_root();

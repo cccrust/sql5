@@ -268,22 +268,25 @@ fn write_frame(&mut self, page_id: u32, frame_type: u32, txn_id: u32, data: &[u8
         let frame = Frame { page_id, frame_type, txn_id, checksum, data: data.to_vec() };
         let encoded = frame.encode();
 
-        // 確保 WAL 檔案夠大：用 seek + write 自動擴展
-        let target_offset = WAL_HEADER_SIZE as u64 + (self.frame_count as u64 + 1) * FRAME_SIZE as u64 - 1;
+        // 擴展並寫入 WAL 檔案
+        let target_size = WAL_HEADER_SIZE as u64 + (self.frame_count as u64 + 1) * FRAME_SIZE as u64;
         
-        // seek 到目標位置的最後一個位元組，寫入 0 來擴展檔案
-        self.wal_file.seek(SeekFrom::Start(target_offset))?;
-        self.wal_file.write_all(&[0u8])?;
+        // 使用 set_len 擴展檔案
+        self.wal_file.set_len(target_size)?;
         
-        // 現在可以 seek 到 frame 位置並寫入
+        // 強制刷新檔案系統緩衝區
+        self.wal_file.sync_all()?;
+        
+        // 寫入 frame
         let frame_offset = WAL_HEADER_SIZE as u64 + (self.frame_count as u64) * FRAME_SIZE as u64;
         self.wal_file.seek(SeekFrom::Start(frame_offset))?;
         self.wal_file.write_all(&encoded)?;
-        self.wal_file.flush()?;
+        self.wal_file.sync_all()?;
+        
         self.frame_count += 1;
-
-        // 更新 header 的 frame_count
         write_wal_header(&mut self.wal_file, self.frame_count as u32)?;
+        self.wal_file.sync_all()?;
+        
         Ok(())
     }
 
