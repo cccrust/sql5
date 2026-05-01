@@ -8,7 +8,8 @@ mod planner;
 mod table;
 
 use interface::Repl;
-use std::env;
+use std::env::{self, Args};
+use std::io::{self, Write};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

@@ -224,9 +224,13 @@ impl Wal {
             self.committed.insert(page_id, data.clone());
             let txn_id = self.next_txn_id;
             self.next_txn_id += 1;
-            let _ = self.write_frame(page_id, FRAME_TYPE_DATA, txn_id, &data);
+            if let Err(e) = self.write_frame(page_id, FRAME_TYPE_DATA, txn_id, &data) {
+                eprintln!("WAL write_frame error: {}", e);
+            }
             let commit_data = vec![0u8; PAGE_SIZE];
-            let _ = self.write_frame(u32::MAX, FRAME_TYPE_COMMIT, txn_id, &commit_data);
+            if let Err(e) = self.write_frame(u32::MAX, FRAME_TYPE_COMMIT, txn_id, &commit_data) {
+                eprintln!("WAL write_commit error: {}", e);
+            }
         }
     }
 
@@ -259,15 +263,23 @@ impl Wal {
 
     // ── 內部輔助 ──────────────────────────────────────────────────────────
 
-    fn write_frame(&mut self, page_id: u32, frame_type: u32, txn_id: u32, data: &[u8]) -> std::io::Result<()> {
+fn write_frame(&mut self, page_id: u32, frame_type: u32, txn_id: u32, data: &[u8]) -> std::io::Result<()> {
         let checksum = compute_checksum(data);
         let frame = Frame { page_id, frame_type, txn_id, checksum, data: data.to_vec() };
         let encoded = frame.encode();
 
-        // 追加到 WAL 末尾
-        let offset = WAL_HEADER_SIZE as u64 + (self.frame_count as u64) * FRAME_SIZE as u64;
-        self.wal_file.seek(SeekFrom::Start(offset))?;
+        // 確保 WAL 檔案夠大：用 seek + write 自動擴展
+        let target_offset = WAL_HEADER_SIZE as u64 + (self.frame_count as u64 + 1) * FRAME_SIZE as u64 - 1;
+        
+        // seek 到目標位置的最後一個位元組，寫入 0 來擴展檔案
+        self.wal_file.seek(SeekFrom::Start(target_offset))?;
+        self.wal_file.write_all(&[0u8])?;
+        
+        // 現在可以 seek 到 frame 位置並寫入
+        let frame_offset = WAL_HEADER_SIZE as u64 + (self.frame_count as u64) * FRAME_SIZE as u64;
+        self.wal_file.seek(SeekFrom::Start(frame_offset))?;
         self.wal_file.write_all(&encoded)?;
+        self.wal_file.flush()?;
         self.frame_count += 1;
 
         // 更新 header 的 frame_count

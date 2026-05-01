@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::btree::node::Key;
 use crate::catalog::Catalog;
-use crate::pager::storage::MemoryStorage;
+use crate::pager::storage::{MemoryStorage, SharedStorage, Storage};
 use crate::parser::ast::{BinOp, Expr, SelectItem, UnaryOp};
 
 use crate::table::row::{Row, Value};
@@ -45,11 +45,12 @@ impl ResultSet {
 }
 
 // ── Executor ──────────────────────────────────────────────────────────────
-// 使用 MemoryStorage 管理資料表
+// 使用 SharedStorage 管理資料表（可選 Memory 或 Disk）
 
 pub struct Executor {
-    catalog:     Catalog<MemoryStorage>,
-    tables:      HashMap<String, Table<MemoryStorage>>,
+    storage:     SharedStorage,
+    catalog:     Catalog<SharedStorage>,
+    tables:      HashMap<String, Table<SharedStorage>>,
     txn_mgr:     TransactionManager,
     cte_cache:   HashMap<String, ResultSet>,
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
@@ -57,8 +58,11 @@ pub struct Executor {
 
 impl Executor {
     pub fn new() -> Self {
+        let storage = SharedStorage::memory();
+        let catalog = Catalog::new(storage.clone());
         Executor {
-            catalog:     Catalog::new(MemoryStorage::new()),
+            storage,
+            catalog,
             tables:      HashMap::new(),
             txn_mgr:     TransactionManager::new(),
             cte_cache:   HashMap::new(),
@@ -66,7 +70,38 @@ impl Executor {
         }
     }
 
-    pub fn catalog(&self) -> &Catalog<MemoryStorage> { &self.catalog }
+    pub fn with_disk(path: &str) -> std::io::Result<Self> {
+        let storage = SharedStorage::disk(path)?;
+        
+        // 先釋放 lock 再使用 storage（避免 deadlock）
+        let root = storage.lock().catalog_root();
+        
+        let catalog = match root {
+            Some(root) => Catalog::open(storage.clone(), root),
+            None => Catalog::new(storage.clone()),
+        };
+        
+        Ok(Executor {
+            storage,
+            catalog,
+            tables:      HashMap::new(),
+            txn_mgr:     TransactionManager::new(),
+            cte_cache:   HashMap::new(),
+            constraints: HashMap::new(),
+        })
+    }
+
+    pub fn catalog(&self) -> &Catalog<SharedStorage> { &self.catalog }
+
+    pub fn catalog_root(&self) -> usize {
+        self.catalog.root_page()
+    }
+
+    pub fn flush(&mut self) {
+        let root = self.catalog.root_page();
+        self.storage.lock().flush();
+        self.storage.lock().set_catalog_root(root);
+    }
 
     pub fn execute(&mut self, plan: Plan) -> Result<ResultSet, String> {
         match plan {
@@ -532,13 +567,21 @@ impl Executor {
             .map(|m| m.schema.columns.iter().map(|c| c.name.clone()).collect())
     }
 
-fn get_table(&mut self, name: &str) -> Result<&mut Table<MemoryStorage>, String> {
+fn get_table(&mut self, name: &str) -> Result<&mut Table<SharedStorage>, String> {
         if !self.tables.contains_key(name) {
             let meta = self.catalog.get_table(name)
                 .ok_or_else(|| format!("table '{}' not found", name))?.clone();
-            let tbl = Table::new(name, meta.schema.clone(), MemoryStorage::new());
-            let root = tbl.root_page();
-            self.catalog.update_table_meta(name, root, 0)?;
+            
+            // 如果已有 root_page（已持久化），用 Table::open 載入
+            // 否則建立新的 Table
+            let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
+                Table::open(name, meta.schema.clone(), self.storage.clone(), meta.root_page, meta.row_count)
+            } else {
+                let tbl = Table::new(name, meta.schema.clone(), self.storage.clone());
+                let root = tbl.root_page();
+                self.catalog.update_table_meta(name, root, 0)?;
+                tbl
+            };
             self.tables.insert(name.to_string(), tbl);
         }
         self.tables.get_mut(name).ok_or_else(|| "internal error".to_string())
