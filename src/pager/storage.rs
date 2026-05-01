@@ -21,6 +21,10 @@ pub trait Storage {
     fn begin_txn(&mut self)  {}
     fn commit_txn(&mut self) {}
     fn rollback_txn(&mut self) {}
+
+    // Catalog 根頁號（MemoryStorage 回傳 None）
+    fn catalog_root(&self) -> Option<usize> { None }
+    fn set_catalog_root(&mut self, _root: usize) {}
 }
 
 // ── MemoryStorage ─────────────────────────────────────────────────────────
@@ -54,6 +58,118 @@ impl Storage for MemoryStorage {
     }
     fn page_count(&self) -> usize { self.next_page }
     fn flush(&mut self) {}
+}
+
+// ── LruCacheStorage ───────────────────────────────────────────────────────
+
+use std::collections::VecDeque;
+
+const DEFAULT_CACHE_SIZE: usize = 256;
+
+pub struct LruCacheStorage<S> {
+    inner: S,
+    cache: HashMap<usize, Node>,
+    access_order: VecDeque<usize>,
+    capacity: usize,
+    hits: usize,
+    misses: usize,
+}
+
+impl<S: Storage> LruCacheStorage<S> {
+    pub fn new(inner: S, capacity: usize) -> Self {
+        LruCacheStorage {
+            inner,
+            cache: HashMap::new(),
+            access_order: VecDeque::new(),
+            capacity: capacity.max(1),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    pub fn with_default_capacity(inner: S) -> Self {
+        Self::new(inner, DEFAULT_CACHE_SIZE)
+    }
+
+    pub fn stats(&self) -> (usize, usize, f64) {
+        let total = self.hits + self.misses;
+        let ratio = if total > 0 { self.hits as f64 / total as f64 } else { 0.0 };
+        (self.hits, self.misses, ratio)
+    }
+
+    fn evict(&mut self) {
+        if let Some(oldest) = self.access_order.pop_front() {
+            self.cache.remove(&oldest);
+        }
+    }
+
+    fn touch(&mut self, page_id: usize) {
+        if let Some(pos) = self.access_order.iter().position(|&x| x == page_id) {
+            self.access_order.remove(pos);
+        }
+        self.access_order.push_back(page_id);
+    }
+}
+
+impl<S: Storage> Storage for LruCacheStorage<S> {
+    fn read_node(&mut self, page_id: usize) -> Node {
+        if let Some(node) = self.cache.get(&page_id).cloned() {
+            self.hits += 1;
+            self.touch(page_id);
+            return node;
+        }
+        self.misses += 1;
+        let node = self.inner.read_node(page_id);
+        if self.cache.len() >= self.capacity {
+            self.evict();
+        }
+        self.cache.insert(page_id, node.clone());
+        self.access_order.push_back(page_id);
+        node
+    }
+
+    fn write_node(&mut self, page_id: usize, node: &Node) {
+        self.inner.write_node(page_id, node);
+        if self.cache.len() >= self.capacity {
+            self.evict();
+        }
+        self.cache.insert(page_id, node.clone());
+        self.touch(page_id);
+    }
+
+    fn alloc_page(&mut self) -> usize {
+        self.inner.alloc_page()
+    }
+
+    fn page_count(&self) -> usize {
+        self.inner.page_count()
+    }
+
+    fn flush(&mut self) {
+        self.inner.flush();
+        self.cache.clear();
+        self.access_order.clear();
+    }
+
+    fn begin_txn(&mut self) {
+        self.inner.begin_txn()
+    }
+
+    fn commit_txn(&mut self) {
+        self.inner.commit_txn()
+    }
+
+    fn rollback_txn(&mut self) {
+        self.inner.rollback_txn()
+    }
+
+    fn catalog_root(&self) -> Option<usize> {
+        self.inner.catalog_root()
+    }
+
+    fn set_catalog_root(&mut self, root: usize) {
+        self.inner.set_catalog_root(root)
+    }
 }
 
 // ── DiskStorage（含 WAL） ─────────────────────────────────────────────────
@@ -107,8 +223,13 @@ impl DiskStorage {
 
     /// 將 catalog 根頁號寫入 header
     pub fn set_catalog_root(&mut self, root: usize) {
+        eprintln!("DEBUG DiskStorage::set_catalog_root({})", root);
         self.catalog_root = Some(root);
-        let _ = self.write_header();
+        if let Err(e) = self.write_header() {
+            eprintln!("DEBUG: write_header failed: {:?}", e);
+        } else {
+            eprintln!("DEBUG: write_header succeeded");
+        }
     }
 
     fn write_header(&mut self) -> std::io::Result<()> {
@@ -134,7 +255,10 @@ impl DiskStorage {
         }
         self.page_count = u32::from_le_bytes(hdr[12..16].try_into().unwrap()) as usize;
         let cat_root = u32::from_le_bytes(hdr[16..20].try_into().unwrap()) as usize;
-        self.catalog_root = if cat_root == 0 { None } else { Some(cat_root) };
+        
+        // Always store catalog_root - if it was set to a non-zero value, preserve it
+        // If it was 0 (never set), store as None
+        self.catalog_root = if cat_root > 0 { Some(cat_root) } else { None };
         Ok(())
     }
 
@@ -207,6 +331,12 @@ impl Storage for DiskStorage {
     fn begin_txn(&mut self)    { self.wal.begin(); }
     fn commit_txn(&mut self)   { self.wal.commit().unwrap(); }
     fn rollback_txn(&mut self) { self.wal.rollback(); }
+
+    fn catalog_root(&self) -> Option<usize> { self.catalog_root }
+    fn set_catalog_root(&mut self, root: usize) {
+        self.catalog_root = Some(root);
+        let _ = self.write_header();
+    }
 }
 
 // ── 測試 ─────────────────────────────────────────────────────────────────
@@ -322,6 +452,75 @@ mod tests {
         }
         cleanup("catroot");
     }
+
+    #[test]
+    fn lru_cache_hit() {
+        let inner = MemoryStorage::new();
+        let mut cache = LruCacheStorage::new(inner, 2);
+        
+        cache.write_node(1, &leaf_with(1, "a"));
+        cache.write_node(2, &leaf_with(2, "b"));
+        
+        let _ = cache.read_node(1);
+        cache.write_node(3, &leaf_with(3, "c"));
+        
+        let node1 = cache.read_node(1);
+        assert_eq!(node1.keys[0], Key::Integer(1));
+        
+        let (hits, misses, _) = cache.stats();
+        assert_eq!(hits, 2);
+        assert_eq!(misses, 0);
+    }
+
+    #[test]
+    fn lru_cache_eviction() {
+        let inner = MemoryStorage::new();
+        let mut cache = LruCacheStorage::new(inner, 2);
+        
+        cache.write_node(1, &leaf_with(1, "a"));
+        cache.write_node(2, &leaf_with(2, "b"));
+        
+        cache.read_node(1);
+        cache.write_node(3, &leaf_with(3, "c"));
+        
+        let (hits, misses, _) = cache.stats();
+        assert_eq!(hits, 1);
+        assert_eq!(misses, 0);
+    }
+
+    #[test]
+    fn lru_cache_with_memory() {
+        let inner = MemoryStorage::new();
+        let mut cache = LruCacheStorage::with_default_capacity(inner);
+        
+        for i in 0..100 {
+            cache.write_node(i, &leaf_with(i as i64, &format!("val{}", i)));
+        }
+        
+        let node = cache.read_node(50);
+        assert_eq!(node.keys[0], Key::Integer(50));
+        
+        cache.flush();
+        
+        let (hits, misses, _) = cache.stats();
+        assert!(hits > 0);
+    }
+
+    #[test]
+    fn lru_cache_write_updates_cache() {
+        let inner = MemoryStorage::new();
+        let mut cache = LruCacheStorage::new(inner, 2);
+        
+        cache.write_node(1, &leaf_with(1, "original"));
+        
+        let node = cache.read_node(1);
+        assert_eq!(node.keys[0], Key::Integer(1));
+        
+        cache.write_node(1, &leaf_with(1, "updated"));
+        
+        let node2 = cache.read_node(1);
+        assert_eq!(node2.keys[0], Key::Integer(1));
+    }
 }
 
 // ── DynStorage 包裝 ─────────────────────────────────────────────────────────
@@ -403,6 +602,18 @@ impl SharedStorage {
 
     pub fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Storage>> {
         self.inner.lock().expect("Storage lock poisoned")
+    }
+
+    /// 回傳 catalog 根頁號（如果有）
+    pub fn catalog_root(&self) -> Option<usize> {
+        self.inner.lock().ok().and_then(|inner| inner.catalog_root())
+    }
+
+    /// 設定 catalog 根頁號
+    pub fn set_catalog_root(&mut self, root: usize) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.set_catalog_root(root);
+        }
     }
 }
 

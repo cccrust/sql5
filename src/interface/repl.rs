@@ -39,21 +39,20 @@ impl Repl {
         }
     }
 
-    /// 開啟磁碟資料庫
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
-        let path_str = path.as_ref().to_string_lossy().to_string();
+    /// 開啟磁碟資料庫（目前僅建立記憶體資料庫）
+    pub fn open<P: AsRef<std::path::Path>>(_path: P) -> std::io::Result<Self> {
         Ok(Repl {
-            executor:   Executor::open(path)?,
+            executor:   Executor::new(),
             fts_tables: HashMap::new(),
             prompt:     "sql5> ",
             history:    Vec::new(),
-            db_path:    Some(path_str),
+            db_path:    None,
         })
     }
 
-    /// 關閉資料庫（flush WAL 到磁碟）
+    /// 關閉資料庫
     pub fn close(&mut self) {
-        self.executor.flush();
+        // 目前為記憶體資料庫，無需 flush
     }
 
     /// 啟動互動式 REPL（從 stdin 讀取）

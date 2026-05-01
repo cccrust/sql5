@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::btree::node::Key;
 use crate::catalog::Catalog;
-use crate::pager::storage::{SharedStorage, Storage};
+use crate::pager::storage::MemoryStorage;
 use crate::parser::ast::{BinOp, Expr, SelectItem, UnaryOp};
 
 use crate::table::row::{Row, Value};
@@ -45,24 +45,20 @@ impl ResultSet {
 }
 
 // ── Executor ──────────────────────────────────────────────────────────────
-// 使用 SharedStorage 支援 MemoryStorage 或 DiskStorage（磁碟持久化 + WAL）
+// 使用 MemoryStorage 管理資料表
 
 pub struct Executor {
-    storage:     SharedStorage,
-    catalog:     Catalog<SharedStorage>,
-    tables:      HashMap<String, Table<SharedStorage>>,
+    catalog:     Catalog<MemoryStorage>,
+    tables:      HashMap<String, Table<MemoryStorage>>,
     txn_mgr:     TransactionManager,
     cte_cache:   HashMap<String, ResultSet>,
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
 }
 
 impl Executor {
-    /// 建立記憶體資料庫（預設）
     pub fn new() -> Self {
-        let storage = SharedStorage::memory();
         Executor {
-            storage:     storage.clone(),
-            catalog:     Catalog::new(storage.clone()),
+            catalog:     Catalog::new(MemoryStorage::new()),
             tables:      HashMap::new(),
             txn_mgr:     TransactionManager::new(),
             cte_cache:   HashMap::new(),
@@ -70,25 +66,7 @@ impl Executor {
         }
     }
 
-    /// 開啟磁碟資料庫檔案（含 WAL）
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
-        let storage = SharedStorage::disk(path)?;
-        Ok(Executor {
-            storage:     storage.clone(),
-            catalog:     Catalog::new(storage.clone()),
-            tables:      HashMap::new(),
-            txn_mgr:     TransactionManager::new(),
-            cte_cache:   HashMap::new(),
-            constraints: HashMap::new(),
-        })
-    }
-
-    pub fn catalog(&self) -> &Catalog<SharedStorage> { &self.catalog }
-
-    /// 將 WAL checkpoint 到磁碟（關閉資料庫前呼叫）
-    pub fn flush(&mut self) {
-        self.storage.flush();
-    }
+    pub fn catalog(&self) -> &Catalog<MemoryStorage> { &self.catalog }
 
     pub fn execute(&mut self, plan: Plan) -> Result<ResultSet, String> {
         match plan {
@@ -554,11 +532,11 @@ impl Executor {
             .map(|m| m.schema.columns.iter().map(|c| c.name.clone()).collect())
     }
 
-    fn get_table(&mut self, name: &str) -> Result<&mut Table<SharedStorage>, String> {
+fn get_table(&mut self, name: &str) -> Result<&mut Table<MemoryStorage>, String> {
         if !self.tables.contains_key(name) {
             let meta = self.catalog.get_table(name)
                 .ok_or_else(|| format!("table '{}' not found", name))?.clone();
-            let tbl = Table::new(name, meta.schema.clone(), self.storage.clone());
+            let tbl = Table::new(name, meta.schema.clone(), MemoryStorage::new());
             let root = tbl.root_page();
             self.catalog.update_table_meta(name, root, 0)?;
             self.tables.insert(name.to_string(), tbl);
