@@ -321,8 +321,13 @@ OUT=$(run_sql \
     "SELECT * FROM t;")
 assert_contains "BEGIN/COMMIT" "1" "$OUT"
 
-OUT=$(run_sql "ROLLBACK;")
-assert_contains "ROLLBACK" "rolled back" "$OUT"
+OUT=$(run_sql \
+    "BEGIN;" \
+    "CREATE TABLE t_rollback (id INTEGER);" \
+    "INSERT INTO t_rollback VALUES (1);" \
+    "ROLLBACK;" \
+    "SELECT * FROM t_rollback;")
+assert_contains "ROLLBACK" "not found" "$OUT"
 
 # ── 9. 字串函式 ───────────────────────────────────────────────────────────
 section "String Functions"

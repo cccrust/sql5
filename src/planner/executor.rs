@@ -490,12 +490,19 @@ impl Executor {
             }
             TransactionOp::Rollback => {
                 let snap = self.txn_mgr.rollback()?;
-                // 還原各表的資料（重建 Table 並截斷到 snapshot 的 row count）
-                // 簡化實作：清除所有在交易中新建或修改的表，從空狀態重建
-                // 完整實作需要 MVCC 或 WAL page-level rollback
+                // 1. 刪除交易中新建的表（不在 snapshot 中的表）
+                let snap_tables: std::collections::HashSet<_> = snap.row_counts.keys().cloned().collect();
+                let to_delete: Vec<_> = self.tables.keys()
+                    .filter(|name| !snap_tables.contains(*name))
+                    .cloned()
+                    .collect();
+                for name in to_delete {
+                    self.tables.remove(&name);
+                    self.catalog.drop_table(&name).ok();
+                }
+                // 2. 還原 snapshot 中的表（截斷多餘的資料）
                 for (name, count) in &snap.row_counts {
                     if let Some(tbl) = self.tables.get_mut(name) {
-                        // 把超過 snapshot 的資料截掉（掃描刪除）
                         let current = tbl.scan();
                         let to_delete: Vec<_> = current.into_iter()
                             .skip(*count)
