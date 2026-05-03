@@ -24,7 +24,7 @@ pub enum Token {
     Real, Blob, Boolean,
     True, False,
     Pragma, Explain, Alter, Rename, To, Add, Column, Do, Of,  // v1.3
-    View, Reindex, Analyze, Temp, Conflict, Nothing, Union, Check,  // v1.5-1.8
+    View, Reindex, Analyze, Temp, Conflict, Nothing, Union, Check, Cast,  // v1.5-1.11
     Trigger, Before, After, Instead, Each, Row, For,  // v1.9
 
     // ── 識別符 ──────────────────────────────────────────────────────────
@@ -148,6 +148,7 @@ fn keyword(s: &str) -> Option<Token> {
         "NOTHING"     => Some(Token::Nothing),
         "UNION"       => Some(Token::Union),
         "CHECK"       => Some(Token::Check),
+        "CAST"        => Some(Token::Cast),
         "TRIGGER"     => Some(Token::Trigger),
         "BEFORE"      => Some(Token::Before),
         "AFTER"       => Some(Token::After),

@@ -747,6 +747,15 @@ impl Parser {
                 self.eat(&Token::RParen)?;
                 Ok(Expr::Exists { query: Box::new(query), negated })
             }
+            Token::Cast => {
+                self.advance();
+                self.eat(&Token::LParen)?;
+                let expr = self.parse_expr()?;
+                self.eat(&Token::As)?;
+                let sql_type = self.parse_sql_type()?;
+                self.eat(&Token::RParen)?;
+                Ok(Expr::Cast { expr: Box::new(expr), to: sql_type })
+            }
             Token::Ident(name) => {
                 self.advance();
                 // function call

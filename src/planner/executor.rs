@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::btree::node::Key;
 use crate::catalog::Catalog;
 use crate::pager::storage::{MemoryStorage, SharedStorage, Storage};
-use crate::parser::ast::{BinOp, ColumnConstraint, Expr, SelectItem, UnaryOp};
+use crate::parser::ast::{BinOp, ColumnConstraint, Expr, SelectItem, SqlType, UnaryOp};
 
 use crate::table::row::{Row, Value};
 use crate::table::Table;
@@ -1071,6 +1071,42 @@ pub(crate) fn eval_expr(expr: &Expr, row: &Row, cols: &[String]) -> Result<Value
                 let m = sql_like(&s, &pat);
                 Ok(Value::Boolean(if *negated { !m } else { m }))
             } else { Ok(Value::Boolean(false)) }
+        }
+
+        Expr::Cast { expr, to } => {
+            let v = eval_expr(expr, row, cols)?;
+            match to {
+                SqlType::Integer => Ok(match v {
+                    Value::Integer(i) => Value::Integer(i),
+                    Value::Float(f) => Value::Integer(f as i64),
+                    Value::Text(s) => Value::Integer(s.parse::<i64>().unwrap_or(0)),
+                    Value::Null => Value::Null,
+                    Value::Boolean(b) => Value::Integer(if b { 1 } else { 0 }),
+                }),
+                SqlType::Real => Ok(match v {
+                    Value::Integer(i) => Value::Float(i as f64),
+                    Value::Float(f) => Value::Float(f),
+                    Value::Text(s) => Value::Float(s.parse::<f64>().unwrap_or(0.0)),
+                    Value::Null => Value::Null,
+                    Value::Boolean(b) => Value::Float(if b { 1.0 } else { 0.0 }),
+                }),
+                SqlType::Text => Ok(match v {
+                    Value::Text(s) => Value::Text(s),
+                    Value::Integer(i) => Value::Text(i.to_string()),
+                    Value::Float(f) => Value::Text(f.to_string()),
+                    Value::Boolean(b) => Value::Text(if b { "1".to_string() } else { "0".to_string() }),
+                    Value::Null => Value::Null,
+                }),
+                SqlType::Blob => Ok(Value::Text(v.to_string())),
+                SqlType::Boolean => Ok(match v {
+                    Value::Boolean(b) => Value::Boolean(b),
+                    Value::Integer(i) => Value::Boolean(i != 0),
+                    Value::Text(s) => Value::Boolean(s == "1" || s.eq_ignore_ascii_case("true")),
+                    Value::Null => Value::Null,
+                    Value::Float(f) => Value::Boolean(f != 0.0),
+                }),
+                SqlType::Null => Ok(Value::Null),
+            }
         }
 
         Expr::Function { name, args, .. } => {
