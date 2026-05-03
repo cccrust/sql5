@@ -17,6 +17,8 @@ pub enum Statement {
     Explain(ExplainStmt),
     CreateView(CreateViewStmt),
     DropView(DropViewStmt),
+    CreateTrigger(CreateTriggerStmt),
+    DropTrigger(DropTriggerStmt),
     Reindex(ReindexStmt),
     Analyze(AnalyzeStmt),
     Begin,
@@ -235,6 +237,40 @@ pub struct CreateViewStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropViewStmt {
+    pub if_exists: bool,
+    pub name:      String,
+}
+
+// ── TRIGGER ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateTriggerStmt {
+    pub if_not_exists: bool,
+    pub name:          String,
+    pub table:         String,
+    pub timing:        TriggerTiming,
+    pub event:         TriggerEvent,
+    pub for_each_row:  bool,
+    pub when:          Option<Box<Expr>>,
+    pub body:          String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerTiming {
+    Before,
+    After,
+    InsteadOf,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerEvent {
+    Delete,
+    Insert,
+    Update(Option<Vec<String>>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropTriggerStmt {
     pub if_exists: bool,
     pub name:      String,
 }

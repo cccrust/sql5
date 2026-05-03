@@ -27,7 +27,7 @@ use crate::btree::tree::BPlusTree;
 use crate::pager::storage::Storage;
 use crate::table::schema::Schema;
 
-use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta};
+use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta, TriggerMeta};
 use crate::table::schema::Column;
 
 pub struct Catalog<S: Storage> {
@@ -39,6 +39,8 @@ pub struct Catalog<S: Storage> {
     index_cache: HashMap<String, IndexMeta>,
     /// 視圖快取
     view_cache: HashMap<String, ViewMeta>,
+    /// trigger 快取
+    trigger_cache: HashMap<String, TriggerMeta>,
 }
 
 impl<S: Storage> Catalog<S> {
@@ -49,13 +51,13 @@ impl<S: Storage> Catalog<S> {
     /// 建立全新的 Catalog（全新資料庫）
     pub fn new(storage: S) -> Self {
         let sys_tree = BPlusTree::new(64, storage);
-        Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new() }
+        Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new(), trigger_cache: HashMap::new() }
     }
 
     /// 開啟已有的 Catalog（從磁碟重新載入）
     pub fn open(storage: S, root_page: usize) -> Self {
         let sys_tree = BPlusTree::open(64, storage, root_page, 0);
-        let mut catalog = Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new() };
+        let mut catalog = Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new(), trigger_cache: HashMap::new() };
         catalog.load_all();
         catalog
     }
@@ -192,6 +194,33 @@ impl<S: Storage> Catalog<S> {
     /// 列出所有視圖名稱
     pub fn view_names(&self) -> Vec<&str> {
         self.view_cache.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// 建立 Trigger
+    pub fn create_trigger(&mut self, name: &str, table: &str, body: &str) -> Result<(), String> {
+        if self.trigger_cache.contains_key(name) {
+            return Err(format!("trigger '{}' already exists", name));
+        }
+        self.trigger_cache.insert(name.to_string(), TriggerMeta::new(name, table, body));
+        Ok(())
+    }
+
+    /// 刪除 Trigger
+    pub fn drop_trigger(&mut self, name: &str) -> Result<(), String> {
+        if self.trigger_cache.remove(name).is_none() {
+            return Err(format!("trigger '{}' not found", name));
+        }
+        Ok(())
+    }
+
+    /// Trigger 是否存在
+    pub fn trigger_exists(&self, name: &str) -> bool {
+        self.trigger_cache.contains_key(name)
+    }
+
+    /// 列出所有 Trigger 名稱
+    pub fn trigger_names(&self) -> Vec<&str> {
+        self.trigger_cache.keys().map(|s| s.as_str()).collect()
     }
 
     /// 重新命名資料表

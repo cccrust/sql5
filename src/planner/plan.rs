@@ -139,6 +139,17 @@ pub enum Plan {
         if_exists: bool,
     },
 
+    /// CREATE TRIGGER
+    CreateTrigger {
+        stmt: crate::parser::ast::CreateTriggerStmt,
+    },
+
+    /// DROP TRIGGER
+    DropTrigger {
+        name:      String,
+        if_exists: bool,
+    },
+
     /// REINDEX
     Reindex {
         name: Option<String>,

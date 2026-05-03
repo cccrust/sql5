@@ -357,8 +357,9 @@ impl Parser {
         match self.peek().clone() {
             Token::Table => Ok(Statement::CreateTable(self.parse_create_table()?)),
             Token::Index => Ok(Statement::CreateIndex(self.parse_create_index(unique)?)),
-            Token::View  => Ok(Statement::CreateView(self.parse_create_view()?)),
-            t => Err(format!("expected TABLE, INDEX, or VIEW after CREATE, got {:?}", t)),
+            Token::View    => Ok(Statement::CreateView(self.parse_create_view()?)),
+            Token::Trigger => Ok(Statement::CreateTrigger(self.parse_create_trigger()?)),
+            t => Err(format!("expected TABLE, INDEX, VIEW, or TRIGGER after CREATE, got {:?}", t)),
         }
     }
 
@@ -515,10 +516,11 @@ impl Parser {
     fn parse_drop(&mut self) -> Result<Statement, String> {
         self.eat(&Token::Drop)?;
         match self.peek().clone() {
-            Token::Table => Ok(Statement::DropTable(self.parse_drop_table()?)),
-            Token::Index => Ok(Statement::DropIndex(self.parse_drop_index()?)),
-            Token::View  => Ok(Statement::DropView(self.parse_drop_view()?)),
-            t => Err(format!("expected TABLE, INDEX, or VIEW after DROP, got {:?}", t)),
+            Token::Table  => Ok(Statement::DropTable(self.parse_drop_table()?)),
+            Token::Index  => Ok(Statement::DropIndex(self.parse_drop_index()?)),
+            Token::View   => Ok(Statement::DropView(self.parse_drop_view()?)),
+            Token::Trigger=> Ok(Statement::DropTrigger(self.parse_drop_trigger()?)),
+            t => Err(format!("expected TABLE, INDEX, VIEW, or TRIGGER after DROP, got {:?}", t)),
         }
     }
 
@@ -553,6 +555,162 @@ impl Parser {
         } else { false };
         let name = self.eat_ident()?;
         Ok(DropViewStmt { if_exists, name })
+    }
+
+    // ── TRIGGER ─────────────────────────────────────────────────────────────
+
+    fn parse_create_trigger(&mut self) -> Result<CreateTriggerStmt, String> {
+        self.eat(&Token::Trigger)?;
+        let if_not_exists = if self.check(&Token::If) {
+            self.advance();
+            self.eat(&Token::Not)?;
+            self.eat(&Token::Exists)?;
+            true
+        } else { false };
+        let name = self.eat_ident()?;
+
+        let timing = if self.check(&Token::Before) {
+            self.advance();
+            TriggerTiming::Before
+        } else if self.check(&Token::After) {
+            self.advance();
+            TriggerTiming::After
+        } else if self.check(&Token::Instead) {
+            self.advance();
+            self.eat(&Token::Of)?;
+            TriggerTiming::InsteadOf
+        } else {
+            return Err("expected BEFORE, AFTER, or INSTEAD OF".into());
+        };
+
+        let event = if self.check(&Token::Delete) {
+            self.advance();
+            TriggerEvent::Delete
+        } else if self.check(&Token::Insert) {
+            self.advance();
+            TriggerEvent::Insert
+        } else if self.check(&Token::Update) {
+            self.advance();
+            let cols = if self.check(&Token::Of) {
+                self.advance();
+                let mut columns = Vec::new();
+                loop {
+                    columns.push(self.eat_ident()?);
+                    if !self.maybe(&Token::Comma) { break; }
+                }
+                Some(columns)
+            } else {
+                None
+            };
+            TriggerEvent::Update(cols)
+        } else {
+            return Err("expected DELETE, INSERT, or UPDATE".into());
+        };
+
+        self.eat(&Token::On)?;
+        let table = self.eat_ident()?;
+
+        let for_each_row = if self.check(&Token::For) {
+            self.advance();
+            self.eat(&Token::Each)?;
+            self.eat(&Token::Row)?;
+            true
+        } else { false };
+
+        let when = if self.check(&Token::When) {
+            self.advance();
+            Some(Box::new(self.parse_expr()?))
+        } else {
+            None
+        };
+
+        self.eat(&Token::Begin)?;
+        let body = self.parse_trigger_body()?;
+        self.eat(&Token::End)?;
+
+        Ok(CreateTriggerStmt {
+            if_not_exists,
+            name,
+            table,
+            timing,
+            event,
+            for_each_row,
+            when,
+            body,
+        })
+    }
+
+    fn parse_trigger_body(&mut self) -> Result<String, String> {
+        let mut depth = 0;
+        let start = self.pos;
+        loop {
+            match self.peek() {
+                Token::Eof => return Err("unterminated TRIGGER body".into()),
+                Token::Begin => { self.advance(); depth += 1; }
+                Token::End if depth == 0 => break,
+                Token::End => { self.advance(); if depth == 0 { break; } else { depth -= 1; } }
+                _ => { self.advance(); }
+            }
+        }
+        let tokens = &self.tokens[start..self.pos];
+        let mut sql = String::new();
+        for t in tokens {
+            if let Some(s) = self.token_to_string(t) {
+                if !sql.is_empty() { sql.push(' '); }
+                sql.push_str(&s);
+            }
+        }
+        Ok(sql)
+    }
+
+    fn token_to_string(&self, token: &Token) -> Option<String> {
+        match token {
+            Token::Select | Token::From | Token::Where | Token::Insert | Token::Into
+            | Token::Values | Token::Update | Token::Set | Token::Delete | Token::Create
+            | Token::Table | Token::Index | Token::Drop | Token::As | Token::On
+            | Token::And | Token::Or | Token::Not | Token::Null | Token::True | Token::False
+            | Token::Eq | Token::NotEq | Token::Lt | Token::LtEq | Token::Gt | Token::GtEq
+            | Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent
+            | Token::LParen | Token::RParen | Token::Comma | Token::Dot | Token::Semicolon
+            | Token::Like | Token::GLOB | Token::Is | Token::In | Token::Between
+            | Token::Order | Token::By | Token::Asc | Token::Desc | Token::Limit
+            | Token::Offset | Token::Join | Token::Inner | Token::Left | Token::Outer
+            | Token::Cross | Token::Natural | Token::Using | Token::Group | Token::Having
+            | Token::Distinct | Token::All | Token::Exists | Token::Begin | Token::Commit
+            | Token::Rollback | Token::Transaction | Token::Union | Token::Cast | Token::When
+            | Token::For | Token::Each | Token::Row | Token::Trigger | Token::Before
+            | Token::After | Token::Instead | Token::Of | Token::View | Token::Index
+            | Token::Primary | Token::Key | Token::Unique | Token::If | Token::Temp
+            | Token::Reindex | Token::Analyze | Token::Pragma | Token::Explain
+            | Token::Alter | Token::Rename | Token::To | Token::Add | Token::Column
+            | Token::AutoIncrement | Token::Default | Token::Check | Token::Conflict
+            | Token::Virtual | Token::Match | Token::With | Token::Recursive
+            | Token::References | Token::KwInteger | Token::Real | Token::Blob
+            | Token::Boolean | Token::Nothing | Token::Do => {
+                Some(format!("{:?}", token).to_uppercase())
+            }
+            Token::Ident(s) => Some(s.clone()),
+            Token::LitInt(i) => Some(i.to_string()),
+            Token::LitFloat(f) => Some(f.to_string()),
+            Token::LitStr(s) => Some(format!("'{}'", s)),
+            Token::Right => Some("RIGHT".to_string()),
+            Token::KwText => Some("TEXT".to_string()),
+            Token::End => Some("END".to_string()),
+            Token::Concat => Some("||".to_string()),
+            Token::LitNull => Some("NULL".to_string()),
+            Token::Eof => None,
+        }
+    }
+
+    fn parse_drop_trigger(&mut self) -> Result<DropTriggerStmt, String> {
+        self.eat(&Token::Trigger)?;
+        let if_exists = if self.check(&Token::If) {
+            self.advance();
+            self.eat(&Token::Exists)?;
+            true
+        } else { false };
+        let name = self.eat_ident()?;
+        Ok(DropTriggerStmt { if_exists, name })
     }
 
     // ── REINDEX ─────────────────────────────────────────────────────────────

@@ -54,6 +54,24 @@ impl ViewMeta {
     }
 }
 
+/// Trigger 的描述
+#[derive(Debug, Clone)]
+pub struct TriggerMeta {
+    pub name:  String,
+    pub table: String,
+    pub body:  String,
+}
+
+impl TriggerMeta {
+    pub fn new(name: &str, table: &str, body: &str) -> Self {
+        TriggerMeta {
+            name: name.to_string(),
+            table: table.to_string(),
+            body: body.to_string(),
+        }
+    }
+}
+
 // ------------------------------------------------------------------ //
 //  TableMeta 序列化（存進系統表）                                      //
 // ------------------------------------------------------------------ //

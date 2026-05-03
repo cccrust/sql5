@@ -25,7 +25,7 @@ pub enum Token {
     True, False,
     Pragma, Explain, Alter, Rename, To, Add, Column, Do, Of,  // v1.3
     View, Reindex, Analyze, Temp, Conflict, Nothing, Union, Check, Cast, Default, GLOB,  // v1.5-1.14
-    Trigger, Before, After, Instead, Each, Row, For,  // v1.9
+    Trigger, Before, After, Instead, Each, Row, For, When, End, AutoIncrement,  // v1.9+
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -159,6 +159,9 @@ fn keyword(s: &str) -> Option<Token> {
         "FOR"         => Some(Token::For),
         "EACH"        => Some(Token::Each),
         "ROW"         => Some(Token::Row),
+        "WHEN"        => Some(Token::When),
+        "END"         => Some(Token::End),
+        "AUTOINCREMENT" => Some(Token::AutoIncrement),
         _             => None,
     }
 }

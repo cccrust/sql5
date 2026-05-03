@@ -133,6 +133,8 @@ impl Executor {
             Plan::Explain { inner }                          => self.exec_explain(*inner),
             Plan::CreateView { stmt }                        => self.exec_create_view(stmt),
             Plan::DropView { name, if_exists }              => self.exec_drop_view(name, if_exists),
+            Plan::CreateTrigger { stmt }                     => self.exec_create_trigger(stmt),
+            Plan::DropTrigger { name, if_exists }             => self.exec_drop_trigger(name, if_exists),
             Plan::Reindex { name }                           => self.exec_reindex(name),
             Plan::Analyze { name }                           => self.exec_analyze(name),
             Plan::Transaction(op)                            => self.exec_transaction(op),
@@ -647,6 +649,25 @@ impl Executor {
         }
         self.catalog.drop_view(&name)?;
         Ok(ResultSet::ok_msg("view dropped"))
+    }
+
+    fn exec_create_trigger(&mut self, stmt: crate::parser::ast::CreateTriggerStmt) -> Result<ResultSet, String> {
+        if self.catalog.trigger_exists(&stmt.name) {
+            if stmt.if_not_exists { return Ok(ResultSet::ok_msg("trigger already exists")); }
+            return Err(format!("trigger '{}' already exists", stmt.name));
+        }
+        let body = format!("{:?} ON {} {:?} -- body: {}", stmt.timing, stmt.table, stmt.event, stmt.body);
+        self.catalog.create_trigger(&stmt.name, &stmt.table, &body)?;
+        Ok(ResultSet::ok_msg("trigger created"))
+    }
+
+    fn exec_drop_trigger(&mut self, name: String, if_exists: bool) -> Result<ResultSet, String> {
+        if !self.catalog.trigger_exists(&name) {
+            if if_exists { return Ok(ResultSet::ok_msg("trigger does not exist")); }
+            return Err(format!("trigger '{}' does not exist", name));
+        }
+        self.catalog.drop_trigger(&name)?;
+        Ok(ResultSet::ok_msg("trigger dropped"))
     }
 
     fn exec_reindex(&mut self, name: Option<String>) -> Result<ResultSet, String> {
