@@ -258,7 +258,24 @@ impl Parser {
             self.eat(&Token::RParen)?;
             if !self.maybe(&Token::Comma) { break; }
         }
-        Ok(InsertStmt { table, columns, values })
+
+        let on_conflict = if self.maybe(&Token::On) {
+            self.eat(&Token::Conflict)?;
+            self.eat(&Token::Do)?;
+            if self.check(&Token::Nothing) {
+                self.advance();
+                Some(crate::parser::ast::OnConflict::DoNothing)
+            } else {
+                self.eat(&Token::Update)?;
+                self.eat(&Token::Set)?;
+                let col = self.eat_ident()?;
+                self.eat(&Token::Eq)?;
+                let val = self.parse_expr()?;
+                Some(crate::parser::ast::OnConflict::DoUpdate { column: col, value: val })
+            }
+        } else { None };
+
+        Ok(InsertStmt { table, columns, values, on_conflict })
     }
 
     fn is_values_next(&self) -> bool {

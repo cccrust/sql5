@@ -219,6 +219,20 @@ impl Repl {
                 eprintln!("table '{}' not found", name);
             }
         }
+        // 視圖
+        if let Some(t) = table {
+            if catalog.view_exists(t) {
+                if let Some(view) = catalog.get_view(t) {
+                    println!("CREATE VIEW {} AS {}", view.name, view.query);
+                }
+            }
+        } else {
+            for name in catalog.view_names() {
+                if let Some(view) = catalog.get_view(name) {
+                    println!("CREATE VIEW {} AS {}", view.name, view.query);
+                }
+            }
+        }
         // FTS 虛擬表
         if let Some(t) = table.and_then(|n| self.fts_tables.get(n)) {
             println!("CREATE VIRTUAL TABLE {} USING fts5({});",

@@ -250,6 +250,84 @@ impl<S: Storage> Catalog<S> {
             self.cache.insert(meta.name.clone(), meta);
         }
     }
+
+    /// 取得 sqlite_master 的查詢結果（type, name, tbl_name, rootpage, sql）
+    pub fn sqlite_master_rows(&self) -> Vec<Vec<crate::table::row::Value>> {
+        use crate::table::row::Value;
+        let mut rows = Vec::new();
+
+        for meta in self.cache.values() {
+            rows.push(vec![
+                Value::Text("table".to_string()),
+                Value::Text(meta.name.clone()),
+                Value::Text(meta.name.clone()),
+                Value::Integer(meta.root_page as i64),
+                Value::Text(self.table_create_sql(meta)),
+            ]);
+        }
+
+        for idx in self.index_cache.values() {
+            rows.push(vec![
+                Value::Text("index".to_string()),
+                Value::Text(idx.name.clone()),
+                Value::Text(idx.table.clone()),
+                Value::Integer(0),
+                Value::Text(self.index_create_sql(idx)),
+            ]);
+        }
+
+        for view in self.view_cache.values() {
+            rows.push(vec![
+                Value::Text("view".to_string()),
+                Value::Text(view.name.clone()),
+                Value::Text(String::new()),
+                Value::Integer(0),
+                Value::Text(self.view_create_sql(view)),
+            ]);
+        }
+
+        rows.sort_by(|a, b| {
+            let a_type = match &a[0] { Value::Text(s) => s.as_str(), _ => "" };
+            let b_type = match &b[0] { Value::Text(s) => s.as_str(), _ => "" };
+            a_type.cmp(b_type).then_with(|| {
+                let a_name = match &a[1] { Value::Text(s) => s.as_str(), _ => "" };
+                let b_name = match &b[1] { Value::Text(s) => s.as_str(), _ => "" };
+                a_name.cmp(b_name)
+            })
+        });
+
+        rows
+    }
+
+    fn table_create_sql(&self, meta: &TableMeta) -> String {
+        use crate::table::schema::DataType;
+        let cols: Vec<String> = meta.schema.columns.iter().map(|c| {
+            let dt = match c.data_type {
+                DataType::Integer => "INTEGER",
+                DataType::Float   => "REAL",
+                DataType::Text    => "TEXT",
+                DataType::Boolean => "BOOLEAN",
+            };
+            format!("{} {}", c.name, dt)
+        }).collect();
+        format!("CREATE TABLE {} ({})", meta.name, cols.join(", "))
+    }
+
+    fn index_create_sql(&self, idx: &IndexMeta) -> String {
+        let unique = if idx.unique { "UNIQUE " } else { "" };
+        format!("CREATE {}INDEX {} ON {} ({})",
+            unique, idx.name, idx.table, idx.columns.join(", "))
+    }
+
+    fn view_create_sql(&self, view: &ViewMeta) -> String {
+        format!("CREATE VIEW {} AS {}", view.name, view.query)
+    }
+
+    /// sqlite_master 的欄位名稱
+    pub fn sqlite_master_columns() -> Vec<String> {
+        vec!["type".to_string(), "name".to_string(), "tbl_name".to_string(),
+             "rootpage".to_string(), "sql".to_string()]
+    }
 }
 
 // ------------------------------------------------------------------ //

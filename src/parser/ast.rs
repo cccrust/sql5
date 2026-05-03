@@ -100,6 +100,13 @@ pub struct InsertStmt {
     pub table:   String,
     pub columns: Vec<String>,   // 空表示不指定欄位
     pub values:  Vec<Vec<Expr>>,
+    pub on_conflict: Option<OnConflict>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OnConflict {
+    DoNothing,
+    DoUpdate { column: String, value: Expr },
 }
 
 // ── UPDATE ────────────────────────────────────────────────────────────────

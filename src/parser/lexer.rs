@@ -23,8 +23,8 @@ pub enum Token {
     KwInteger, KwText,       // 型別關鍵字
     Real, Blob, Boolean,
     True, False,
-    Pragma, Explain, Alter, Rename, To, Add, Column,  // v1.3
-    View, Reindex, Analyze, Temp,  // v1.5
+    Pragma, Explain, Alter, Rename, To, Add, Column, Do,  // v1.3
+    View, Reindex, Analyze, Temp, Conflict, Nothing,  // v1.5/v1.6
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -137,11 +137,14 @@ fn keyword(s: &str) -> Option<Token> {
         "TO"          => Some(Token::To),
         "ADD"         => Some(Token::Add),
         "COLUMN"      => Some(Token::Column),
+        "DO"          => Some(Token::Do),
         "VIEW"        => Some(Token::View),
         "REINDEX"     => Some(Token::Reindex),
         "ANALYZE"     => Some(Token::Analyze),
         "TEMP"        => Some(Token::Temp),
         "TEMPORARY"   => Some(Token::Temp),
+        "CONFLICT"    => Some(Token::Conflict),
+        "NOTHING"     => Some(Token::Nothing),
         _             => None,
     }
 }

@@ -523,7 +523,53 @@ OUT=$(run_sql \
     "ANALYZE t2;")
 assert_contains "ANALYZE with table name" "analyze executed" "$OUT"
 
-# ── 16. PRAGMA ─────────────────────────────────────────────────────────
+# ── 16. sqlite_master / PRAGMA ─────────────────────────────────────────
+section "sqlite_master / PRAGMA"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "CREATE INDEX idx ON t (name);" \
+    "CREATE VIEW v AS SELECT * FROM t;" \
+    "SELECT type, name FROM sqlite_master ORDER BY type, name;")
+assert_contains "sqlite_master query" "table" "$OUT"
+assert_contains "sqlite_master query" "t" "$OUT"
+assert_contains "sqlite_master query" "index" "$OUT"
+assert_contains "sqlite_master query" "view" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "SELECT name FROM sqlite_master WHERE type='table';")
+assert_contains "sqlite_master WHERE" "t" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "PRAGMA table_info = 't';")
+assert_contains "PRAGMA table_info" "id" "$OUT"
+assert_contains "PRAGMA table_info" "name" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "CREATE INDEX idx1 ON t (id);" \
+    "CREATE UNIQUE INDEX idx2 ON t (id);" \
+    "PRAGMA index_list = 't';")
+assert_contains "PRAGMA index_list" "idx1" "$OUT"
+assert_contains "PRAGMA index_list" "idx2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "CREATE INDEX idx ON t (name, id);" \
+    "PRAGMA index_info = 'idx';")
+assert_contains "PRAGMA index_info" "name" "$OUT"
+assert_contains "PRAGMA index_info" "id" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "CREATE VIEW v AS SELECT * FROM t;" \
+    ".schema")
+assert_contains ".schema shows table" "id INTEGER" "$OUT"
+assert_contains ".schema shows view" "CREATE VIEW" "$OUT"
+
+# ── 18. PRAGMA ─────────────────────────────────────────────────────────
 section "PRAGMA"
 
 OUT=$(run_sql "PRAGMA journal_mode;")
@@ -538,7 +584,7 @@ assert_contains "PRAGMA cache_size" "256" "$OUT"
 OUT=$(run_sql "PRAGMA freelist_count;")
 assert_contains "PRAGMA freelist_count" "0" "$OUT"
 
-# ── 17. EXPLAIN ────────────────────────────────────────────────────────
+# ── 19. EXPLAIN ────────────────────────────────────────────────────────
 section "EXPLAIN"
 
 OUT=$(run_sql \
@@ -546,7 +592,7 @@ OUT=$(run_sql \
     "EXPLAIN SELECT * FROM users WHERE id = 1;")
 assert_contains "EXPLAIN shows plan" "SeqScan\|IndexScan" "$OUT"
 
-# ── 18. Enhanced Dot Commands ──────────────────────────────────────────
+# ── 20. Enhanced Dot Commands ──────────────────────────────────────────
 section "Enhanced Dot Commands"
 
 OUT=$(run_sql \
@@ -557,7 +603,7 @@ assert_contains ".tables shows table" "t" "$OUT"
 OUT=$(run_sql ".databases")
 assert_contains ".databases" "(memory)" "$OUT"
 
-# ── 19. WAL Transactions ──────────────────────────────────────────────
+# ── 21. WAL Transactions ──────────────────────────────────────────────
 section "WAL Transactions"
 
 OUT=$(run_sql \

@@ -160,6 +160,19 @@ impl Executor {
                 .collect();
             return Ok(ResultSet { columns: col_names, rows });
         }
+        // sqlite_master 虛擬表
+        if table == "sqlite_master" || table == "sqlite_master_mview" {
+            let columns = crate::catalog::Catalog::<crate::pager::storage::SharedStorage>::sqlite_master_columns();
+            let rows = self.catalog.sqlite_master_rows();
+            let rows: Vec<Vec<Value>> = rows.into_iter()
+                .filter(|row| match &filter {
+                    Some(e) => eval_expr(e, &Row::new(row.clone()), &columns)
+                        .map(|v| is_truthy(&v)).unwrap_or(false),
+                    None => true,
+                })
+                .collect();
+            return Ok(ResultSet { columns, rows });
+        }
         let col_names = self.col_names(table)?;
         // 先 resolve 子查詢（需要在掃描前執行，且需要 &mut self）
         let resolved_filter = match filter {
@@ -697,6 +710,94 @@ impl Executor {
             "freelist_count" => {
                 let count = storage.freelist_count();
                 Ok(ResultSet { columns: vec!["freelist_count".into()], rows: vec![vec![Value::Integer(count as i64)]] })
+            }
+            "table_info" => {
+                if let Some(expr) = value {
+                    if let crate::parser::ast::Expr::LitStr(table_name) = expr {
+                        let meta = self.catalog.get_table(&table_name)
+                            .ok_or_else(|| format!("no such table: {}", table_name))?;
+                        let columns = vec!["cid".into(), "name".into(), "type".into(),
+                                          "notnull".into(), "dflt_value".into(), "pk".into()];
+                        let rows: Vec<Vec<Value>> = meta.schema.columns.iter().enumerate()
+                            .map(|(i, col)| {
+                                let col_type = match col.data_type {
+                                    crate::table::schema::DataType::Integer => "INTEGER",
+                                    crate::table::schema::DataType::Float => "REAL",
+                                    crate::table::schema::DataType::Text => "TEXT",
+                                    crate::table::schema::DataType::Boolean => "BOOLEAN",
+                                };
+                                vec![
+                                    Value::Integer(i as i64),
+                                    Value::Text(col.name.clone()),
+                                    Value::Text(col_type.to_string()),
+                                    Value::Integer(if col.nullable { 0 } else { 1 }),
+                                    Value::Null,
+                                    Value::Integer(0),
+                                ]
+                            })
+                            .collect();
+                        Ok(ResultSet { columns, rows })
+                    } else {
+                        Err("table_info requires a table name".to_string())
+                    }
+                } else {
+                    Err("table_info requires a table name".to_string())
+                }
+            }
+            "index_list" => {
+                if let Some(expr) = value {
+                    if let crate::parser::ast::Expr::LitStr(table_name) = expr {
+                        let columns = vec!["seq".into(), "name".into(), "unique".into(),
+                                          "origin".into(), "partial".into()];
+                        let mut rows = Vec::new();
+                        for (i, idx) in self.catalog.index_names().iter().enumerate() {
+                            let idx_meta = self.catalog.get_index(idx).unwrap();
+                            if idx_meta.table == *table_name {
+                                rows.push(vec![
+                                    Value::Integer(i as i64),
+                                    Value::Text(idx.to_string()),
+                                    Value::Integer(if idx_meta.unique { 1 } else { 0 }),
+                                    Value::Text("u".to_string()),
+                                    Value::Integer(0),
+                                ]);
+                            }
+                        }
+                        Ok(ResultSet { columns, rows })
+                    } else {
+                        Err("index_list requires a table name".to_string())
+                    }
+                } else {
+                    Err("index_list requires a table name".to_string())
+                }
+            }
+            "index_info" => {
+                if let Some(expr) = value {
+                    if let crate::parser::ast::Expr::LitStr(index_name) = expr {
+                        if let Some(idx_meta) = self.catalog.get_index(&index_name) {
+                            let columns = vec!["seqno".into(), "cid".into(), "name".into()];
+                            let rows: Vec<Vec<Value>> = idx_meta.columns.iter().enumerate()
+                                .map(|(i, col)| {
+                                    let cid = self.catalog.get_table(&idx_meta.table)
+                                        .and_then(|m| m.schema.index_of(col))
+                                        .map(|v| v as i64)
+                                        .unwrap_or(-1);
+                                    vec![
+                                        Value::Integer(i as i64),
+                                        Value::Integer(cid),
+                                        Value::Text(col.clone()),
+                                    ]
+                                })
+                                .collect();
+                            Ok(ResultSet { columns, rows })
+                        } else {
+                            Err(format!("no such index: {}", index_name))
+                        }
+                    } else {
+                        Err("index_info requires an index name".to_string())
+                    }
+                } else {
+                    Err("index_info requires an index name".to_string())
+                }
             }
             _ => Err(format!("unknown pragma: {}", name)),
         }

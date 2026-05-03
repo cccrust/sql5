@@ -26,7 +26,7 @@ SQL database engine with layered architecture:
 Run `./test.sh` for CLI tests, or point to a specific binary: `./test.sh ./target/debug/sql5`
 
 ## Version Documentation
-每次完成重要功能後，必須在 `_doc/sql5_vX.X.md` 建立版本文件，內容包含：
+每次完成重要功能後，必須在 `_doc/vX.X.md` 建立版本文件，內容包含：
 - 版本號與日期
 - 新增功能列表
 - 架構變化說明
