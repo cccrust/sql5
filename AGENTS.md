@@ -1,29 +1,33 @@
 # AGENTS.md
 
-## Project Type
-- Rust project (Cargo-based)
-- Package name: `sql5` (SQLite-compatible database with CJK FTS support)
-- Uses Rust edition 2024
+## Project
+- Single Cargo package `sql5` v1.4.0 (SQLite-compatible database with CJK FTS support)
+- Edition: Rust 2024
+- No workspace — single package only
 
 ## Commands
-- `cargo run` - Run the REPL
-- `cargo build` - Build the project
-- `cargo check` - Type-check without building
-- `./test.sh` - Run CLI test suite (default: `./target/debug/sql5`)
+- `cargo run` — Run the REPL
+- `cargo build` — Build
+- `cargo check` — Type-check without building
+- `cargo test` — Run unit tests (200+ inline tests in src/)
+- `cargo test <name>` — Run tests matching `<name>`
+- `./test.sh` — CLI integration test suite (uses `./target/debug/sql5` by default)
+- `./test.sh ./target/debug/sql5` — Run CLI tests against a specific binary
 
 ## Architecture
-SQL database engine with layered architecture:
-- **parser** - SQL parsing and AST
-- **planner** - Query planning and execution
-- **btree** - B+Tree index implementation
-- **table** - Table management (schema, rows, serialization)
-- **pager** - Storage engine (memory + disk, WAL support)
-- **catalog** - System catalog and metadata
-- **fts** - Full-text search (FTS5 with CJK support)
-- **interface** - REPL CLI
+- **parser** — SQL parsing and AST
+- **planner** — Query planning and execution
+- **btree** — B+Tree index implementation
+- **table** — Table management (schema, rows, serialization)
+- **pager** — Storage engine (memory + disk, WAL support)
+- **catalog** — System catalog and metadata
+- **fts** — Full-text search (FTS5 with CJK support)
+- **interface** — REPL CLI
 
-## Testing
-Run `./test.sh` for CLI tests, or point to a specific binary: `./test.sh ./target/debug/sql5`
+## REPL Usage
+- `sql5` — In-memory REPL (prompt: `sql5> `)
+- `sql5 <path>` — Open or create a database file
+- `.quit` — Exit REPL
 
 ## Version Documentation
 每次完成重要功能後，必須在 `_doc/vX.X.md` 建立版本文件，內容包含：
@@ -36,6 +40,5 @@ Run `./test.sh` for CLI tests, or point to a specific binary: `./test.sh ./targe
 - 測試結果
 
 ## Notes
-- Some temp files in tests use `/tmp/sql5_*.db` pattern
-- REPL prompt shows "sql5> "
-- Version banner: "sql5 v0.1.0 — SQLite-compatible database with FTS"
+- Temp test files use `/tmp/sql5_*.db` pattern
+- REPL hardcodes banner "sql5 v0.1.0" in `src/interface/repl.rs:375` (stale, not synced to Cargo.toml)
