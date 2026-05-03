@@ -75,10 +75,13 @@ impl Parser {
             Token::Update   => Ok(Statement::Update(self.parse_update()?)),
             Token::Delete   => Ok(Statement::Delete(self.parse_delete()?)),
             Token::Create   => self.parse_create(),
-            Token::Drop     => Ok(Statement::DropTable(self.parse_drop_table()?)),
+            Token::Drop     => self.parse_drop(),
             Token::Begin    => { self.advance(); Ok(Statement::Begin) }
             Token::Commit   => { self.advance(); Ok(Statement::Commit) }
             Token::Rollback => { self.advance(); Ok(Statement::Rollback) }
+            Token::Alter    => Ok(Statement::AlterTable(self.parse_alter_table()?)),
+            Token::Pragma   => Ok(Statement::Pragma(self.parse_pragma()?)),
+            Token::Explain  => Ok(Statement::Explain(self.parse_explain()?)),
             t => Err(format!("unexpected token {:?}", t)),
         }
     }
@@ -421,10 +424,18 @@ impl Parser {
         Ok(CreateIndexStmt { unique, name, table, columns })
     }
 
-    // ── DROP TABLE ────────────────────────────────────────────────────────
+    // ── DROP TABLE / DROP INDEX ─────────────────────────────────────────────
+
+    fn parse_drop(&mut self) -> Result<Statement, String> {
+        self.eat(&Token::Drop)?;
+        match self.peek().clone() {
+            Token::Table => Ok(Statement::DropTable(self.parse_drop_table()?)),
+            Token::Index => Ok(Statement::DropIndex(self.parse_drop_index()?)),
+            t => Err(format!("expected TABLE or INDEX after DROP, got {:?}", t)),
+        }
+    }
 
     fn parse_drop_table(&mut self) -> Result<DropTableStmt, String> {
-        self.eat(&Token::Drop)?;
         self.eat(&Token::Table)?;
         let if_exists = if self.check(&Token::If) {
             self.advance();
@@ -433,6 +444,60 @@ impl Parser {
         } else { false };
         let name = self.eat_ident()?;
         Ok(DropTableStmt { if_exists, name })
+    }
+
+    fn parse_drop_index(&mut self) -> Result<DropIndexStmt, String> {
+        self.eat(&Token::Index)?;
+        let if_exists = if self.check(&Token::If) {
+            self.advance();
+            self.eat(&Token::Exists)?;
+            true
+        } else { false };
+        let name = self.eat_ident()?;
+        Ok(DropIndexStmt { if_exists, name })
+    }
+
+    // ── ALTER TABLE ───────────────────────────────────────────────────────
+
+    fn parse_alter_table(&mut self) -> Result<AlterTableStmt, String> {
+        self.eat(&Token::Alter)?;
+        self.eat(&Token::Table)?;
+        let table = self.eat_ident()?;
+        match self.peek().clone() {
+            Token::Rename => {
+                self.advance();
+                self.eat(&Token::To)?;
+                let to = self.eat_ident()?;
+                Ok(AlterTableStmt { table, op: AlterTableOp::RenameTo(to) })
+            }
+            Token::Add => {
+                self.advance();
+                self.eat(&Token::Column)?;
+                let name = self.eat_ident()?;
+                let data_type = self.parse_sql_type()?;
+                Ok(AlterTableStmt { table, op: AlterTableOp::AddColumn { name, data_type } })
+            }
+            t => Err(format!("expected RENAME or ADD after ALTER TABLE, got {:?}", t)),
+        }
+    }
+
+    // ── PRAGMA ─────────────────────────────────────────────────────────────
+
+    fn parse_pragma(&mut self) -> Result<PragmaStmt, String> {
+        self.eat(&Token::Pragma)?;
+        let name = self.eat_ident()?;
+        let value = if self.maybe(&Token::Eq) {
+            Some(self.parse_expr()?)
+        } else { None };
+        Ok(PragmaStmt { name, value })
+    }
+
+    // ── EXPLAIN ────────────────────────────────────────────────────────────
+
+    fn parse_explain(&mut self) -> Result<ExplainStmt, String> {
+        self.eat(&Token::Explain)?;
+        let inner = Box::new(self.parse_statement()?);
+        Ok(ExplainStmt { inner })
     }
 
     // ── 運算式 (Pratt parser) ─────────────────────────────────────────────
@@ -904,5 +969,67 @@ mod tests {
     fn multi_statement() {
         let stmts = p("SELECT 1; SELECT 2; SELECT 3");
         assert_eq!(stmts.len(), 3);
+    }
+
+    #[test]
+    fn drop_index() {
+        let stmts = p("DROP INDEX IF EXISTS idx_name");
+        if let Statement::DropIndex(s) = &stmts[0] {
+            assert!(s.if_exists);
+            assert_eq!(s.name, "idx_name");
+        } else { panic!("expected DropIndex") }
+    }
+
+    #[test]
+    fn alter_table_rename() {
+        let stmts = p("ALTER TABLE users RENAME TO users_old");
+        if let Statement::AlterTable(s) = &stmts[0] {
+            assert_eq!(s.table, "users");
+            match &s.op {
+                AlterTableOp::RenameTo(new_name) => assert_eq!(new_name, "users_old"),
+                _ => panic!("expected RenameTo"),
+            }
+        } else { panic!("expected AlterTable") }
+    }
+
+    #[test]
+    fn alter_table_add_column() {
+        let stmts = p("ALTER TABLE users ADD COLUMN email TEXT");
+        if let Statement::AlterTable(s) = &stmts[0] {
+            assert_eq!(s.table, "users");
+            match &s.op {
+                AlterTableOp::AddColumn { name, data_type } => {
+                    assert_eq!(name, "email");
+                    assert!(matches!(data_type, SqlType::Text));
+                }
+                _ => panic!("expected AddColumn"),
+            }
+        } else { panic!("expected AlterTable") }
+    }
+
+    #[test]
+    fn pragma_stmt() {
+        let stmts = p("PRAGMA cache_size");
+        if let Statement::Pragma(s) = &stmts[0] {
+            assert_eq!(s.name, "cache_size");
+            assert!(s.value.is_none());
+        } else { panic!("expected Pragma") }
+    }
+
+    #[test]
+    fn pragma_with_value() {
+        let stmts = p("PRAGMA cache_size = 512");
+        if let Statement::Pragma(s) = &stmts[0] {
+            assert_eq!(s.name, "cache_size");
+            assert!(s.value.is_some());
+        } else { panic!("expected Pragma") }
+    }
+
+    #[test]
+    fn explain_select() {
+        let stmts = p("EXPLAIN SELECT * FROM users WHERE id = 1");
+        if let Statement::Explain(s) = &stmts[0] {
+            assert!(matches!(s.inner.as_ref(), Statement::Select(_)));
+        } else { panic!("expected Explain") }
     }
 }

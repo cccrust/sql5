@@ -11,6 +11,10 @@ pub enum Statement {
     CreateTable(CreateTableStmt),
     DropTable(DropTableStmt),
     CreateIndex(CreateIndexStmt),
+    DropIndex(DropIndexStmt),
+    AlterTable(AlterTableStmt),
+    Pragma(PragmaStmt),
+    Explain(ExplainStmt),
     Begin,
     Commit,
     Rollback,
@@ -164,6 +168,43 @@ pub struct CreateIndexStmt {
     pub name:      String,
     pub table:     String,
     pub columns:   Vec<String>,
+}
+
+// ── DROP INDEX ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropIndexStmt {
+    pub if_exists: bool,
+    pub name:      String,
+}
+
+// ── ALTER TABLE ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterTableOp {
+    RenameTo(String),
+    AddColumn { name: String, data_type: SqlType },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterTableStmt {
+    pub table: String,
+    pub op:    AlterTableOp,
+}
+
+// ── PRAGMA ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PragmaStmt {
+    pub name:  String,
+    pub value: Option<Expr>,
+}
+
+// ── EXPLAIN ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplainStmt {
+    pub inner: Box<Statement>,
 }
 
 // ── 運算式 ────────────────────────────────────────────────────────────────

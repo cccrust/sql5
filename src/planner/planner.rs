@@ -27,6 +27,13 @@ impl<'a, S: Storage> Planner<'a, S> {
             Statement::CreateTable(s) => Ok(Plan::CreateTable { stmt: s }),
             Statement::DropTable(s)   => Ok(Plan::DropTable { name: s.name, if_exists: s.if_exists }),
             Statement::CreateIndex(s) => Ok(Plan::CreateIndex { stmt: s }),
+            Statement::DropIndex(s)   => Ok(Plan::DropIndex { name: s.name, if_exists: s.if_exists }),
+            Statement::AlterTable(s)  => Ok(Plan::AlterTable { stmt: s }),
+            Statement::Pragma(s)     => Ok(Plan::Pragma { name: s.name, value: s.value }),
+            Statement::Explain(s)    => {
+                let inner = self.plan(*s.inner)?;
+                Ok(Plan::Explain { inner: Box::new(inner) })
+            }
             Statement::Begin          => Ok(Plan::Transaction(TransactionOp::Begin)),
             Statement::Commit         => Ok(Plan::Transaction(TransactionOp::Commit)),
             Statement::Rollback       => Ok(Plan::Transaction(TransactionOp::Rollback)),

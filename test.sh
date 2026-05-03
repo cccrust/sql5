@@ -448,6 +448,76 @@ OUT=$(run_sql \
     "SELECT * FROM t WHERE val IS NOT NULL;")
 assert_contains "IS NOT NULL" "hello" "$OUT"
 
+# ── 13. CREATE/DROP INDEX ───────────────────────────────────────────────
+section "CREATE/DROP INDEX"
+
+OUT=$(run_sql \
+    "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER);" \
+    "INSERT INTO users VALUES (1, 'Alice', 30);" \
+    "CREATE INDEX idx_name ON users (name);")
+assert_contains "CREATE INDEX" "index created" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, email TEXT);" \
+    "CREATE UNIQUE INDEX idx_email ON t (email);")
+assert_contains "CREATE UNIQUE INDEX" "index created" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "CREATE INDEX idx_name ON t (name);" \
+    "DROP INDEX idx_name;")
+assert_contains "DROP INDEX" "index dropped" "$OUT"
+
+OUT=$(run_sql "DROP INDEX IF EXISTS idx_nonexistent;")
+assert_contains "DROP INDEX IF EXISTS (no-op)" "index does not exist" "$OUT"
+
+# ── 14. ALTER TABLE ────────────────────────────────────────────────────
+section "ALTER TABLE"
+
+OUT=$(run_sql \
+    "CREATE TABLE users (id INTEGER, name TEXT);" \
+    "ALTER TABLE users RENAME TO users_old;")
+assert_contains "ALTER TABLE RENAME" "table renamed" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "ALTER TABLE t ADD COLUMN email TEXT;")
+assert_contains "ALTER TABLE ADD COLUMN" "column added" "$OUT"
+
+# ── 15. PRAGMA ─────────────────────────────────────────────────────────
+section "PRAGMA"
+
+OUT=$(run_sql "PRAGMA journal_mode;")
+assert_contains "PRAGMA journal_mode" "delete" "$OUT"
+
+OUT=$(run_sql "PRAGMA page_size;")
+assert_contains "PRAGMA page_size" "4096" "$OUT"
+
+OUT=$(run_sql "PRAGMA cache_size;")
+assert_contains "PRAGMA cache_size" "256" "$OUT"
+
+OUT=$(run_sql "PRAGMA freelist_count;")
+assert_contains "PRAGMA freelist_count" "0" "$OUT"
+
+# ── 16. EXPLAIN ────────────────────────────────────────────────────────
+section "EXPLAIN"
+
+OUT=$(run_sql \
+    "CREATE TABLE users (id INTEGER, name TEXT);" \
+    "EXPLAIN SELECT * FROM users WHERE id = 1;")
+assert_contains "EXPLAIN shows plan" "SeqScan\|IndexScan" "$OUT"
+
+# ── 17. Enhanced Dot Commands ──────────────────────────────────────────
+section "Enhanced Dot Commands"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    ".tables")
+assert_contains ".tables shows table" "t" "$OUT"
+
+OUT=$(run_sql ".databases")
+assert_contains ".databases" "(memory)" "$OUT"
+
 # ── 結果摘要 ──────────────────────────────────────────────────────────────
 
 echo ""

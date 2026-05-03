@@ -27,13 +27,16 @@ use crate::btree::tree::BPlusTree;
 use crate::pager::storage::Storage;
 use crate::table::schema::Schema;
 
-use super::meta::{decode_meta, encode_meta, TableMeta};
+use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta};
+use crate::table::schema::Column;
 
 pub struct Catalog<S: Storage> {
     /// 系統表：以表名為 key，儲存 TableMeta 的序列化結果
     sys_tree: BPlusTree<S>,
     /// 記憶體快取，避免每次都反序列化
     cache: HashMap<String, TableMeta>,
+    /// 索引快取
+    index_cache: HashMap<String, IndexMeta>,
 }
 
 impl<S: Storage> Catalog<S> {
@@ -44,13 +47,13 @@ impl<S: Storage> Catalog<S> {
     /// 建立全新的 Catalog（全新資料庫）
     pub fn new(storage: S) -> Self {
         let sys_tree = BPlusTree::new(64, storage);
-        Catalog { sys_tree, cache: HashMap::new() }
+        Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new() }
     }
 
     /// 開啟已有的 Catalog（從磁碟重新載入）
     pub fn open(storage: S, root_page: usize) -> Self {
         let sys_tree = BPlusTree::open(64, storage, root_page, 0);
-        let mut catalog = Catalog { sys_tree, cache: HashMap::new() };
+        let mut catalog = Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new() };
         catalog.load_all();
         catalog
     }
@@ -119,6 +122,64 @@ impl<S: Storage> Catalog<S> {
     /// 資料表是否存在
     pub fn table_exists(&self, name: &str) -> bool {
         self.cache.contains_key(name)
+    }
+
+    /// 建立索引
+    pub fn create_index(&mut self, name: &str, table: &str, columns: &[String], unique: bool) -> Result<(), String> {
+        if self.index_cache.contains_key(name) {
+            return Err(format!("index '{}' already exists", name));
+        }
+        if !self.table_exists(table) {
+            return Err(format!("table '{}' does not exist", table));
+        }
+        let meta = IndexMeta::new(name, table, columns, unique);
+        self.index_cache.insert(name.to_string(), meta);
+        Ok(())
+    }
+
+    /// 刪除索引
+    pub fn drop_index(&mut self, name: &str) -> Result<(), String> {
+        if self.index_cache.remove(name).is_none() {
+            return Err(format!("index '{}' not found", name));
+        }
+        Ok(())
+    }
+
+    /// 索引是否存在
+    pub fn index_exists(&self, name: &str) -> bool {
+        self.index_cache.contains_key(name)
+    }
+
+    /// 取得索引
+    pub fn get_index(&self, name: &str) -> Option<&IndexMeta> {
+        self.index_cache.get(name)
+    }
+
+    /// 列出所有索引名稱
+    pub fn index_names(&self) -> Vec<&str> {
+        self.index_cache.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// 重新命名資料表
+    pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        let old_meta = self.cache.remove(old_name)
+            .ok_or_else(|| format!("table '{}' not found", old_name))?;
+        let mut new_meta = old_meta.clone();
+        new_meta.name = new_name.to_string();
+        self.persist_meta(&new_meta);
+        self.cache.insert(new_name.to_string(), new_meta);
+        Ok(())
+    }
+
+    /// 新增欄位
+    pub fn add_column(&mut self, table: &str, _col_name: &str, col: Column) -> Result<(), String> {
+        let meta = self.cache.get_mut(table)
+            .ok_or_else(|| format!("table '{}' not found", table))?;
+        meta.schema.columns.push(col);
+        let meta_clone = meta.clone();
+        drop(meta);
+        self.persist_meta(&meta_clone);
+        Ok(())
     }
 
     /// 系統表的根頁號（磁碟後端需要儲存此值以便重新開啟）

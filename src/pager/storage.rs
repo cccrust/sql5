@@ -25,6 +25,13 @@ pub trait Storage {
     // Catalog 根頁號（MemoryStorage 回傳 None）
     fn catalog_root(&self) -> Option<usize> { None }
     fn set_catalog_root(&mut self, _root: usize) {}
+
+    // PRAGMA 支援
+    fn is_wal(&self) -> bool { false }
+    fn cache_size(&self) -> usize { 256 }
+    fn set_cache_size(&mut self, _size: usize) {}
+    fn page_size(&self) -> usize { PAGE_SIZE }
+    fn freelist_count(&self) -> usize { 0 }
 }
 
 // ── MemoryStorage ─────────────────────────────────────────────────────────

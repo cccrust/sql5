@@ -25,6 +25,7 @@ pub struct Repl {
     prompt:     &'static str,
     history:    Vec<String>,
     db_path:    Option<String>,
+    trace:      bool,
 }
 
 impl Repl {
@@ -36,6 +37,7 @@ impl Repl {
             prompt:     "sql5> ",
             history:    Vec::new(),
             db_path:    None,
+            trace:      false,
         }
     }
 
@@ -49,6 +51,7 @@ impl Repl {
             prompt:     "sql5> ",
             history:    Vec::new(),
             db_path:    Some(path_str),
+            trace:      false,
         })
     }
 
@@ -112,6 +115,7 @@ impl Repl {
     pub fn execute_sql(&mut self, sql: &str) {
         let start = Instant::now();
         self.history.push(sql.trim_end_matches(';').trim().to_string());
+        if self.trace { println!("[trace] {}", sql); }
         // 先嘗試攔截 FTS 特殊語法
         if let Some(result) = self.try_handle_fts(sql) {
             match result {
@@ -152,9 +156,12 @@ impl Repl {
             }
             ".help" | ".h" => self.print_help(),
             ".tables"      => self.cmd_tables(),
+            ".indices"     => self.cmd_indices(),
+            ".databases"   => self.cmd_databases(),
             ".schema"      => self.cmd_schema(parts.get(1).copied()),
             ".fts"         => self.cmd_fts(parts.get(1).copied()),
             ".history"     => self.cmd_history(),
+            ".trace"       => self.cmd_trace(),
             ".timing"      => println!("(timing always on)"),
             _ => eprintln!("Unknown command: {}  (type .help for help)", parts[0]),
         }
@@ -172,6 +179,24 @@ impl Repl {
         // 也列出 FTS 虛擬表
         for name in self.fts_tables.keys() {
             println!("{} (fts)", name);
+        }
+    }
+
+    fn cmd_indices(&self) {
+        let names = self.executor.catalog().index_names();
+        if names.is_empty() {
+            println!("(no indices)");
+        } else {
+            for n in names { println!("{}", n); }
+        }
+    }
+
+    fn cmd_databases(&self) {
+        println!("main:");
+        if let Some(path) = &self.db_path {
+            println!("  {}", path);
+        } else {
+            println!("  (memory)");
         }
     }
 
@@ -199,6 +224,11 @@ impl Repl {
             println!("CREATE VIRTUAL TABLE {} USING fts5({});",
                 t.name, t.columns.join(", "));
         }
+    }
+
+    fn cmd_trace(&mut self) {
+        self.trace = !self.trace;
+        println!("trace {}", if self.trace { "on" } else { "off" });
     }
 
     fn cmd_fts(&mut self, arg: Option<&str>) {

@@ -23,6 +23,7 @@ pub enum Token {
     KwInteger, KwText,       // 型別關鍵字
     Real, Blob, Boolean,
     True, False,
+    Pragma, Explain, Alter, Rename, To, Add, Column,  // v1.3
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -128,6 +129,13 @@ fn keyword(s: &str) -> Option<Token> {
         "BOOL"        => Some(Token::Boolean),
         "TRUE"        => Some(Token::True),
         "FALSE"       => Some(Token::False),
+        "PRAGMA"      => Some(Token::Pragma),
+        "EXPLAIN"     => Some(Token::Explain),
+        "ALTER"       => Some(Token::Alter),
+        "RENAME"      => Some(Token::Rename),
+        "TO"          => Some(Token::To),
+        "ADD"         => Some(Token::Add),
+        "COLUMN"      => Some(Token::Column),
         _             => None,
     }
 }

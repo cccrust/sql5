@@ -54,6 +54,7 @@ pub struct Executor {
     txn_mgr:     TransactionManager,
     cte_cache:   HashMap<String, ResultSet>,
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
+    cache_size:  usize,
 }
 
 impl Executor {
@@ -67,12 +68,14 @@ impl Executor {
             txn_mgr:     TransactionManager::new(),
             cte_cache:   HashMap::new(),
             constraints: HashMap::new(),
+            cache_size:  256,
         }
     }
 
     pub fn with_disk(path: &str) -> std::io::Result<Self> {
         // 使用 LRU 快取（256 頁容量）
         let storage = SharedStorage::disk_with_cache(path, 256)?;
+        let cache_size = storage.cache_size();
         
         // 先釋放 lock 再使用 storage（避免 deadlock）
         let root = storage.lock().catalog_root();
@@ -89,6 +92,7 @@ impl Executor {
             txn_mgr:     TransactionManager::new(),
             cte_cache:   HashMap::new(),
             constraints: HashMap::new(),
+            cache_size,
         })
     }
 
@@ -122,7 +126,11 @@ impl Executor {
             Plan::Delete    { table, input }                 => self.exec_delete(table, *input),
             Plan::CreateTable { stmt }                       => self.exec_create_table(stmt),
             Plan::DropTable { name, if_exists }              => self.exec_drop_table(name, if_exists),
-            Plan::CreateIndex { .. }                         => Ok(ResultSet::ok_msg("index created")),
+            Plan::CreateIndex { stmt }                       => self.exec_create_index(stmt),
+            Plan::DropIndex { name, if_exists }              => self.exec_drop_index(name, if_exists),
+            Plan::AlterTable { stmt }                        => self.exec_alter_table(stmt),
+            Plan::Pragma { name, value }                     => self.exec_pragma(name, value),
+            Plan::Explain { inner }                          => self.exec_explain(*inner),
             Plan::Transaction(op)                            => self.exec_transaction(op),
             Plan::SubqueryScan { query, alias }                  => self.exec_subquery_scan(*query, alias),
             Plan::Cte { definitions, query }                     => self.exec_cte(definitions, *query),
@@ -551,6 +559,101 @@ impl Executor {
         self.tables.remove(&name);
         self.catalog.drop_table(&name)?;
         Ok(ResultSet::ok_msg("table dropped"))
+    }
+
+    fn exec_create_index(&mut self, stmt: crate::parser::ast::CreateIndexStmt) -> Result<ResultSet, String> {
+        if !self.catalog.table_exists(&stmt.table) {
+            return Err(format!("table '{}' does not exist", stmt.table));
+        }
+        for col in &stmt.columns {
+            if !self.catalog.get_table(&stmt.table)
+                .map(|t| t.schema.columns.iter().any(|c| &c.name == col))
+                .unwrap_or(false)
+            {
+                return Err(format!("no such column: {}", col));
+            }
+        }
+        self.catalog.create_index(&stmt.name, &stmt.table, &stmt.columns, stmt.unique)?;
+        Ok(ResultSet::ok_msg("index created"))
+    }
+
+    fn exec_drop_index(&mut self, name: String, if_exists: bool) -> Result<ResultSet, String> {
+        if !self.catalog.index_exists(&name) {
+            if if_exists { return Ok(ResultSet::ok_msg("index does not exist")); }
+            return Err(format!("index '{}' does not exist", name));
+        }
+        self.catalog.drop_index(&name)?;
+        Ok(ResultSet::ok_msg("index dropped"))
+    }
+
+    fn exec_alter_table(&mut self, stmt: crate::parser::ast::AlterTableStmt) -> Result<ResultSet, String> {
+        if !self.catalog.table_exists(&stmt.table) {
+            return Err(format!("table '{}' does not exist", stmt.table));
+        }
+        match stmt.op {
+            crate::parser::ast::AlterTableOp::RenameTo(new_name) => {
+                self.catalog.rename_table(&stmt.table, &new_name)?;
+                Ok(ResultSet::ok_msg("table renamed"))
+            }
+            crate::parser::ast::AlterTableOp::AddColumn { name, data_type } => {
+                use crate::table::schema::{Column, DataType};
+                use crate::parser::ast::SqlType;
+                let dt = match data_type {
+                    SqlType::Integer => DataType::Integer,
+                    SqlType::Real    => DataType::Float,
+                    SqlType::Text    => DataType::Text,
+                    SqlType::Blob    => DataType::Text,
+                    SqlType::Boolean => DataType::Boolean,
+                    SqlType::Null    => DataType::Text,
+                };
+                self.catalog.add_column(&stmt.table, &name, Column::new(&name, dt))?;
+                Ok(ResultSet::ok_msg("column added"))
+            }
+        }
+    }
+
+    fn exec_pragma(&mut self, name: String, value: Option<crate::parser::ast::Expr>) -> Result<ResultSet, String> {
+        let storage = self.storage.lock();
+        match name.to_lowercase().as_str() {
+            "journal_mode" => {
+                let mode = if storage.is_wal() { "wal" } else { "delete" };
+                if value.is_some() {
+                    return Err("PRAGMA journal_mode cannot be set".to_string());
+                }
+                Ok(ResultSet { columns: vec!["journal_mode".into()], rows: vec![vec![Value::Text(mode.into())]] })
+            }
+            "cache_size" => {
+                let size = if let Some(expr) = value {
+                    match expr {
+                        crate::parser::ast::Expr::LitInt(n) => {
+                            self.cache_size = n as usize;
+                            n as i64
+                        }
+                        _ => return Err("cache_size must be an integer".to_string()),
+                    }
+                } else {
+                    self.cache_size as i64
+                };
+                Ok(ResultSet { columns: vec!["cache_size".into()], rows: vec![vec![Value::Integer(size)]] })
+            }
+            "page_size" => {
+                let size = storage.page_size();
+                Ok(ResultSet { columns: vec!["page_size".into()], rows: vec![vec![Value::Integer(size as i64)]] })
+            }
+            "freelist_count" => {
+                let count = storage.freelist_count();
+                Ok(ResultSet { columns: vec!["freelist_count".into()], rows: vec![vec![Value::Integer(count as i64)]] })
+            }
+            _ => Err(format!("unknown pragma: {}", name)),
+        }
+    }
+
+    fn exec_explain(&mut self, inner: Plan) -> Result<ResultSet, String> {
+        let plan_desc = format!("{:?}", inner);
+        Ok(ResultSet {
+            columns: vec!["plan".into()],
+            rows: vec![vec![Value::Text(plan_desc)]],
+        })
     }
 
     /// 把運算式中的子查詢預先求值為字面值（需要 &mut self）
@@ -1329,5 +1432,95 @@ mod tests {
         assert_eq!(r.rows[0][0], Value::Null);
         let r = run(&mut e, "SELECT NULLIF(age, 99) FROM users WHERE id = 1");
         assert_eq!(r.rows[0][0], Value::Integer(30));
+    }
+
+    #[test]
+    fn create_index_stmt() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)");
+        let r = run(&mut e, "CREATE INDEX idx_name ON users (name)");
+        assert!(r.rows[0][0].to_string().contains("index created"));
+        assert!(e.catalog().index_exists("idx_name"));
+    }
+
+    #[test]
+    fn create_unique_index() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE t (id INTEGER, email TEXT)");
+        let r = run(&mut e, "CREATE UNIQUE INDEX idx_email ON t (email)");
+        assert!(r.rows[0][0].to_string().contains("index created"));
+    }
+
+    #[test]
+    fn drop_index_stmt() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE t (id INTEGER, name TEXT)");
+        run(&mut e, "CREATE INDEX idx_name ON t (name)");
+        let r = run(&mut e, "DROP INDEX idx_name");
+        assert!(r.rows[0][0].to_string().contains("index dropped"));
+        assert!(!e.catalog().index_exists("idx_name"));
+    }
+
+    #[test]
+    fn drop_index_if_exists() {
+        let mut e = Executor::new();
+        let r = run(&mut e, "DROP INDEX IF EXISTS idx_nonexistent");
+        assert!(r.rows[0][0].to_string().contains("index does not exist"));
+    }
+
+    #[test]
+    fn alter_table_rename() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE users (id INTEGER, name TEXT)");
+        let r = run(&mut e, "ALTER TABLE users RENAME TO users_old");
+        assert!(r.rows[0][0].to_string().contains("table renamed"));
+        assert!(e.catalog().table_exists("users_old"));
+        assert!(!e.catalog().table_exists("users"));
+    }
+
+    #[test]
+    fn alter_table_add_column() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE users (id INTEGER, name TEXT)");
+        let r = run(&mut e, "ALTER TABLE users ADD COLUMN email TEXT");
+        assert!(r.rows[0][0].to_string().contains("column added"));
+        let meta = e.catalog().get_table("users").unwrap();
+        assert_eq!(meta.schema.columns.len(), 3);
+        assert_eq!(meta.schema.columns[2].name, "email");
+    }
+
+    #[test]
+    fn pragma_journal_mode() {
+        let mut e = Executor::new();
+        let r = run(&mut e, "PRAGMA journal_mode");
+        assert_eq!(r.rows[0][0].to_string(), "delete");
+    }
+
+    #[test]
+    fn pragma_cache_size() {
+        let mut e = Executor::new();
+        let r = run(&mut e, "PRAGMA cache_size");
+        match &r.rows[0][0] {
+            Value::Integer(size) => assert_eq!(*size, 256),
+            _ => panic!("expected Integer"),
+        }
+    }
+
+    #[test]
+    fn pragma_page_size() {
+        let mut e = Executor::new();
+        let r = run(&mut e, "PRAGMA page_size");
+        match &r.rows[0][0] {
+            Value::Integer(size) => assert_eq!(*size, 4096),
+            _ => panic!("expected Integer"),
+        }
+    }
+
+    #[test]
+    fn explain_stmt() {
+        let mut e = Executor::new();
+        run(&mut e, "CREATE TABLE users (id INTEGER, name TEXT)");
+        let r = run(&mut e, "EXPLAIN SELECT * FROM users WHERE id = 1");
+        assert!(r.rows[0][0].to_string().contains("SeqScan") || r.rows[0][0].to_string().contains("IndexScan"));
     }
 }

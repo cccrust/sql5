@@ -105,6 +105,28 @@ pub enum Plan {
         stmt: crate::parser::ast::CreateIndexStmt,
     },
 
+    /// DROP INDEX
+    DropIndex {
+        name:      String,
+        if_exists: bool,
+    },
+
+    /// ALTER TABLE
+    AlterTable {
+        stmt: crate::parser::ast::AlterTableStmt,
+    },
+
+    /// PRAGMA
+    Pragma {
+        name:  String,
+        value: Option<Expr>,
+    },
+
+    /// EXPLAIN
+    Explain {
+        inner: Box<Plan>,
+    },
+
     /// 子查詢作為掃描來源（FROM (SELECT ...)）
     SubqueryScan {
         query:  Box<Plan>,

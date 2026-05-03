@@ -18,6 +18,26 @@ impl TableMeta {
     }
 }
 
+/// 索引的描述
+#[derive(Debug, Clone)]
+pub struct IndexMeta {
+    pub name:     String,
+    pub table:    String,
+    pub columns:  Vec<String>,
+    pub unique:   bool,
+}
+
+impl IndexMeta {
+    pub fn new(name: &str, table: &str, columns: &[String], unique: bool) -> Self {
+        IndexMeta {
+            name: name.to_string(),
+            table: table.to_string(),
+            columns: columns.to_vec(),
+            unique,
+        }
+    }
+}
+
 // ------------------------------------------------------------------ //
 //  TableMeta 序列化（存進系統表）                                      //
 // ------------------------------------------------------------------ //
