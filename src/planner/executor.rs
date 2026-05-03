@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::btree::node::Key;
 use crate::catalog::Catalog;
+use crate::catalog::meta::{TriggerTiming as CatTiming, TriggerEvent as CatEvent};
 use crate::pager::storage::{MemoryStorage, SharedStorage, Storage};
 use crate::parser::ast::{BinOp, ColumnConstraint, Expr, SelectItem, SqlType, UnaryOp};
 
@@ -11,6 +12,7 @@ use crate::table::row::{Row, Value};
 use crate::table::Table;
 use super::plan::{InsertSource, JoinKind, Plan, TransactionOp};
 use super::transaction::TransactionManager;
+use super::planner::Planner;
 
 // ── ResultSet ─────────────────────────────────────────────────────────────
 
@@ -55,6 +57,7 @@ pub struct Executor {
     cte_cache:   HashMap<String, ResultSet>,
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
     cache_size:  usize,
+    triggering:  bool,
 }
 
 impl Executor {
@@ -69,6 +72,7 @@ impl Executor {
             cte_cache:   HashMap::new(),
             constraints: HashMap::new(),
             cache_size:  256,
+            triggering:  false,
         }
     }
 
@@ -93,6 +97,7 @@ impl Executor {
             cte_cache:   HashMap::new(),
             constraints: HashMap::new(),
             cache_size,
+            triggering:  false,
         })
     }
 
@@ -508,7 +513,19 @@ impl Executor {
                 crate::planner::constraints::check_row(&row, &meta.schema, tc, &existing)
                     .map_err(|e| e)?;
             }
-            self.get_table(&table)?.insert(row)?;
+            self.fire_triggers(
+                        &table,
+                        crate::parser::ast::TriggerEvent::Insert,
+                        None,
+                        None,
+                    )?;
+                    self.get_table(&table)?.insert(row.clone())?;
+                    self.fire_triggers(
+                        &table,
+                        crate::parser::ast::TriggerEvent::Insert,
+                        Some(&row),
+                        None,
+                    )?;
         }
 
         // 更新 catalog 中的 autoinc_last
@@ -529,15 +546,18 @@ impl Executor {
         for rv in src.rows {
             let old = Row::new(rv.clone());
             let key = row_to_key(&old)?;
-            let mut new_vals = rv;
+            let mut new_vals = rv.clone();
             for (col, expr) in &sets {
                 let idx = meta.schema.index_of(col)
                     .ok_or_else(|| format!("column '{}' not found", col))?;
                 new_vals[idx] = eval_expr(expr, &old, &col_names)?;
             }
+            let new_row = Row::new(new_vals.clone());
+            self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Update(None), Some(&new_row), Some(&old))?;
             let tbl = self.get_table(&table)?;
             tbl.delete(&key);
-            tbl.insert(Row::new(new_vals))?;
+            tbl.insert(new_row.clone())?;
+            self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Update(None), Some(&new_row), Some(&old))?;
         }
         Ok(ResultSet::ok_msg(&format!("{} row(s) updated", count)))
     }
@@ -546,8 +566,11 @@ impl Executor {
         let src = self.execute(input)?;
         let count = src.rows.len();
         for rv in src.rows {
-            let key = row_to_key(&Row::new(rv))?;
+            let old = Row::new(rv.clone());
+            let key = row_to_key(&old)?;
+            self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Delete, None, Some(&old))?;
             self.get_table(&table)?.delete(&key);
+            self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Delete, None, Some(&old))?;
         }
         Ok(ResultSet::ok_msg(&format!("{} row(s) deleted", count)))
     }
@@ -652,12 +675,32 @@ impl Executor {
     }
 
     fn exec_create_trigger(&mut self, stmt: crate::parser::ast::CreateTriggerStmt) -> Result<ResultSet, String> {
+        use crate::catalog::meta::{TriggerTiming as CatTiming, TriggerEvent as CatEvent};
+
         if self.catalog.trigger_exists(&stmt.name) {
             if stmt.if_not_exists { return Ok(ResultSet::ok_msg("trigger already exists")); }
             return Err(format!("trigger '{}' already exists", stmt.name));
         }
-        let body = format!("{:?} ON {} {:?} -- body: {}", stmt.timing, stmt.table, stmt.event, stmt.body);
-        self.catalog.create_trigger(&stmt.name, &stmt.table, &body)?;
+        let timing = match stmt.timing {
+            crate::parser::ast::TriggerTiming::Before => CatTiming::Before,
+            crate::parser::ast::TriggerTiming::After => CatTiming::After,
+            crate::parser::ast::TriggerTiming::InsteadOf => CatTiming::InsteadOf,
+        };
+        let event = match stmt.event {
+            crate::parser::ast::TriggerEvent::Delete => CatEvent::Delete,
+            crate::parser::ast::TriggerEvent::Insert => CatEvent::Insert,
+            crate::parser::ast::TriggerEvent::Update(cols) => CatEvent::Update(cols),
+        };
+        let when = stmt.when.as_ref().map(|e| format!("{:?}", e));
+        self.catalog.create_trigger(
+            &stmt.name,
+            &stmt.table,
+            timing,
+            event,
+            stmt.for_each_row,
+            when,
+            &stmt.body,
+        )?;
         Ok(ResultSet::ok_msg("trigger created"))
     }
 
@@ -668,6 +711,54 @@ impl Executor {
         }
         self.catalog.drop_trigger(&name)?;
         Ok(ResultSet::ok_msg("trigger dropped"))
+    }
+
+    fn fire_triggers(
+        &mut self,
+        table: &str,
+        event: crate::parser::ast::TriggerEvent,
+        _new_row: Option<&Row>,
+        _old_row: Option<&Row>,
+    ) -> Result<(), String> {
+        if self.triggering { return Ok(()); }
+
+        let cat_event = match &event {
+            crate::parser::ast::TriggerEvent::Delete => CatEvent::Delete,
+            crate::parser::ast::TriggerEvent::Insert => CatEvent::Insert,
+            crate::parser::ast::TriggerEvent::Update(cols) => CatEvent::Update(cols.clone()),
+        };
+
+        let triggers = self.catalog.get_triggers(table, &cat_event);
+        if triggers.is_empty() { return Ok(()); }
+
+        let trigger_bodies: Vec<(CatTiming, String)> = triggers
+            .iter()
+            .map(|t| (t.timing.clone(), t.body.clone()))
+            .collect();
+
+        for (timing, body) in trigger_bodies {
+            let timing_matches = matches!(timing, CatTiming::Before | CatTiming::After);
+            if !timing_matches { continue; }
+
+            self.triggering = true;
+            let result = self.execute_sql_body(&body);
+            self.triggering = false;
+
+            result?;
+        }
+        Ok(())
+    }
+
+    fn execute_sql_body(&mut self, sql: &str) -> Result<(), String> {
+        let stmts = crate::parser::parse(sql)
+            .map_err(|e| format!("trigger body parse error: {}", e))?;
+        let stmt = stmts.into_iter().next()
+            .ok_or_else(|| "trigger body is empty".to_string())?;
+        let planner = Planner::new(&self.catalog);
+        let plan = planner.plan(stmt)
+            .map_err(|e| format!("trigger body plan error: {}", e))?;
+        self.execute(plan)?;
+        Ok(())
     }
 
     fn exec_reindex(&mut self, name: Option<String>) -> Result<ResultSet, String> {

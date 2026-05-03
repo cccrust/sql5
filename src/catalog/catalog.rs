@@ -27,7 +27,7 @@ use crate::btree::tree::BPlusTree;
 use crate::pager::storage::Storage;
 use crate::table::schema::Schema;
 
-use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta, TriggerMeta};
+use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta, TriggerMeta, TriggerTiming, TriggerEvent};
 use crate::table::schema::Column;
 
 pub struct Catalog<S: Storage> {
@@ -197,11 +197,23 @@ impl<S: Storage> Catalog<S> {
     }
 
     /// 建立 Trigger
-    pub fn create_trigger(&mut self, name: &str, table: &str, body: &str) -> Result<(), String> {
+    pub fn create_trigger(
+        &mut self,
+        name: &str,
+        table: &str,
+        timing: TriggerTiming,
+        event: TriggerEvent,
+        for_each_row: bool,
+        when: Option<String>,
+        body: &str,
+    ) -> Result<(), String> {
         if self.trigger_cache.contains_key(name) {
             return Err(format!("trigger '{}' already exists", name));
         }
-        self.trigger_cache.insert(name.to_string(), TriggerMeta::new(name, table, body));
+        self.trigger_cache.insert(
+            name.to_string(),
+            TriggerMeta::new(name, table, timing, event, for_each_row, when, body),
+        );
         Ok(())
     }
 
@@ -221,6 +233,23 @@ impl<S: Storage> Catalog<S> {
     /// 列出所有 Trigger 名稱
     pub fn trigger_names(&self) -> Vec<&str> {
         self.trigger_cache.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// 取得指定資料表的觸發器（依事件類型過濾）
+    pub fn get_triggers(&self, table: &str, event: &TriggerEvent) -> Vec<&TriggerMeta> {
+        self.trigger_cache
+            .values()
+            .filter(|t| {
+                t.table == table && match (&t.event, event) {
+                    (TriggerEvent::Delete, TriggerEvent::Delete) => true,
+                    (TriggerEvent::Insert, TriggerEvent::Insert) => true,
+                    (TriggerEvent::Update(a), TriggerEvent::Update(b)) => {
+                        a.is_none() || b.is_none() || a == b
+                    }
+                    _ => false,
+                }
+            })
+            .collect()
     }
 
     /// 重新命名資料表

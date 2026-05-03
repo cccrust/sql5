@@ -57,16 +57,30 @@ impl ViewMeta {
 /// Trigger 的描述
 #[derive(Debug, Clone)]
 pub struct TriggerMeta {
-    pub name:  String,
-    pub table: String,
-    pub body:  String,
+    pub name:         String,
+    pub table:        String,
+    pub timing:       TriggerTiming,
+    pub event:        TriggerEvent,
+    pub for_each_row: bool,
+    pub when:         Option<String>,
+    pub body:         String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerTiming { Before, After, InsteadOf }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerEvent { Delete, Insert, Update(Option<Vec<String>>) }
+
 impl TriggerMeta {
-    pub fn new(name: &str, table: &str, body: &str) -> Self {
+    pub fn new(name: &str, table: &str, timing: TriggerTiming, event: TriggerEvent, for_each_row: bool, when: Option<String>, body: &str) -> Self {
         TriggerMeta {
             name: name.to_string(),
             table: table.to_string(),
+            timing,
+            event,
+            for_each_row,
+            when,
             body: body.to_string(),
         }
     }
