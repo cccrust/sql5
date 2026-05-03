@@ -633,7 +633,42 @@ OUT=$(run_sql \
     "INSERT INTO t VALUES (-1);")
 assert_contains "CHECK fail" "CHECK constraint failed" "$OUT"
 
-# ── 19. PRAGMA ─────────────────────────────────────────────────────────
+# ── 19. Query Features ────────────────────────────────────────────────
+section "Query Features"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (a INTEGER, b INTEGER);" \
+    "INSERT INTO t VALUES (1, 10);" \
+    "INSERT INTO t VALUES (1, 5);" \
+    "INSERT INTO t VALUES (2, 8);" \
+    "SELECT a, SUM(b) FROM t GROUP BY a;")
+assert_contains "GROUP BY" "1" "$OUT"
+assert_contains "GROUP BY" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "INSERT INTO t VALUES (1);" \
+    "INSERT INTO t VALUES (2);" \
+    "INSERT INTO t VALUES (3);" \
+    "SELECT * FROM t ORDER BY id DESC;")
+assert_contains "ORDER BY DESC" "3" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "INSERT INTO t VALUES (1);" \
+    "INSERT INTO t VALUES (1);" \
+    "INSERT INTO t VALUES (2);" \
+    "SELECT DISTINCT id FROM t;")
+assert_contains "DISTINCT" "1" "$OUT"
+assert_contains "DISTINCT" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (a INTEGER);" \
+    "INSERT INTO t VALUES (1), (2), (3);" \
+    "SELECT COUNT(*) FROM t;")
+assert_contains "Multi-row INSERT" "3" "$OUT"
+
+# ── 20. PRAGMA ─────────────────────────────────────────────────────────
 section "PRAGMA"
 
 OUT=$(run_sql "PRAGMA journal_mode;")
