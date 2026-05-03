@@ -84,6 +84,8 @@ impl Parser {
             Token::Explain  => Ok(Statement::Explain(self.parse_explain()?)),
             Token::Reindex  => Ok(Statement::Reindex(self.parse_reindex()?)),
             Token::Analyze  => Ok(Statement::Analyze(self.parse_analyze()?)),
+            Token::Attach   => self.parse_attach(),
+            Token::Detach   => self.parse_detach(),
             t => Err(format!("unexpected token {:?}", t)),
         }
     }
@@ -187,12 +189,21 @@ impl Parser {
 
     fn parse_table_ref(&mut self) -> Result<TableRef, String> {
         let name = self.eat_ident()?;
-        let alias = if self.maybe(&Token::As) {
-            Some(self.eat_ident()?)
-        } else if let Token::Ident(_) = self.peek() {
-            Some(self.eat_ident()?)
-        } else { None };
-        Ok(TableRef { name, alias })
+        if self.maybe(&Token::Dot) {
+            let table = self.eat_ident()?;
+            let full_name = format!("{}.{}", name, table);
+            let alias = if self.maybe(&Token::As) {
+                Some(self.eat_ident()?)
+            } else { None };
+            Ok(TableRef { name: full_name, alias })
+        } else {
+            let alias = if self.maybe(&Token::As) {
+                Some(self.eat_ident()?)
+            } else if let Token::Ident(_) = self.peek() {
+                Some(self.eat_ident()?)
+            } else { None };
+            Ok(TableRef { name, alias })
+        }
     }
 
     fn parse_joins(&mut self) -> Result<Vec<Join>, String> {
@@ -686,7 +697,8 @@ impl Parser {
             | Token::AutoIncrement | Token::Default | Token::Check | Token::Conflict
             | Token::Virtual | Token::Match | Token::With | Token::Recursive
             | Token::References | Token::KwInteger | Token::Real | Token::Blob
-            | Token::Boolean | Token::Nothing | Token::Do => {
+            | Token::Boolean | Token::Nothing | Token::Do | Token::Attach
+            | Token::Detach | Token::Database => {
                 Some(format!("{:?}", token).to_uppercase())
             }
             Token::Ident(s) => Some(s.clone()),
@@ -731,6 +743,30 @@ impl Parser {
             Some(self.eat_ident()?)
         } else { None };
         Ok(AnalyzeStmt { name })
+    }
+
+    // ── ATTACH ─────────────────────────────────────────────────────────────
+
+    fn parse_attach(&mut self) -> Result<Statement, String> {
+        self.eat(&Token::Attach)?;
+        self.eat(&Token::Database)?;
+        let tok = self.peek().clone();
+        let path = match tok {
+            Token::LitStr(s) => { self.advance(); s }
+            _ => return Err(format!("expected string literal for path, got {:?}", self.peek())),
+        };
+        self.eat(&Token::As)?;
+        let alias = self.eat_ident()?;
+        Ok(Statement::Attach { path, alias })
+    }
+
+    // ── DETACH ─────────────────────────────────────────────────────────────
+
+    fn parse_detach(&mut self) -> Result<Statement, String> {
+        self.eat(&Token::Detach)?;
+        self.eat(&Token::Database)?;
+        let alias = self.eat_ident()?;
+        Ok(Statement::Detach { alias })
     }
 
     // ── ALTER TABLE ───────────────────────────────────────────────────────

@@ -21,6 +21,8 @@ pub enum Statement {
     DropTrigger(DropTriggerStmt),
     Reindex(ReindexStmt),
     Analyze(AnalyzeStmt),
+    Attach { path: String, alias: String },
+    Detach { alias: String },
     Begin,
     Commit,
     Rollback,

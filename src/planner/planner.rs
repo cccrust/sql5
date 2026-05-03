@@ -43,6 +43,8 @@ impl<'a, S: Storage> Planner<'a, S> {
             Statement::Rollback       => Ok(Plan::Transaction(TransactionOp::Rollback)),
             Statement::CreateTrigger(s) => Ok(Plan::CreateTrigger { stmt: s }),
             Statement::DropTrigger(s)  => Ok(Plan::DropTrigger { name: s.name, if_exists: s.if_exists }),
+            Statement::Attach { path, alias } => Ok(Plan::Attach { path, alias }),
+            Statement::Detach { alias }       => Ok(Plan::Detach { alias }),
         }
     }
 

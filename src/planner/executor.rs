@@ -58,6 +58,14 @@ pub struct Executor {
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
     cache_size:  usize,
     triggering:  bool,
+    attached:    HashMap<String, AttachedDb>,
+}
+
+struct AttachedDb {
+    alias:   String,
+    storage: SharedStorage,
+    catalog: Catalog<SharedStorage>,
+    tables:  HashMap<String, Table<SharedStorage>>,
 }
 
 impl Executor {
@@ -73,6 +81,7 @@ impl Executor {
             constraints: HashMap::new(),
             cache_size:  256,
             triggering:  false,
+            attached:    HashMap::new(),
         }
     }
 
@@ -98,6 +107,7 @@ impl Executor {
             constraints: HashMap::new(),
             cache_size,
             triggering:  false,
+            attached:    HashMap::new(),
         })
     }
 
@@ -142,6 +152,8 @@ impl Executor {
             Plan::DropTrigger { name, if_exists }             => self.exec_drop_trigger(name, if_exists),
             Plan::Reindex { name }                           => self.exec_reindex(name),
             Plan::Analyze { name }                           => self.exec_analyze(name),
+            Plan::Attach { path, alias }                      => self.exec_attach(path, alias),
+            Plan::Detach { alias }                           => self.exec_detach(alias),
             Plan::Transaction(op)                            => self.exec_transaction(op),
             Plan::SubqueryScan { query, alias }                  => self.exec_subquery_scan(*query, alias),
             Plan::Cte { definitions, query }                     => self.exec_cte(definitions, *query),
@@ -792,6 +804,33 @@ impl Executor {
         }
     }
 
+    fn exec_attach(&mut self, path: String, alias: String) -> Result<ResultSet, String> {
+        if self.attached.contains_key(&alias) {
+            return Err(format!("database '{}' is already attached", alias));
+        }
+        let storage = SharedStorage::disk_with_cache(&path, 256)
+            .map_err(|e| format!("cannot open database '{}': {}", path, e))?;
+        let root = storage.lock().catalog_root();
+        let catalog = match root {
+            Some(r) => Catalog::open(storage.clone(), r),
+            None => Catalog::new(storage.clone()),
+        };
+        self.attached.insert(alias.clone(), AttachedDb {
+            alias,
+            storage,
+            catalog,
+            tables: HashMap::new(),
+        });
+        Ok(ResultSet::ok_msg("database attached"))
+    }
+
+    fn exec_detach(&mut self, alias: String) -> Result<ResultSet, String> {
+        if self.attached.remove(&alias).is_none() {
+            return Err(format!("no such attached database: {}", alias));
+        }
+        Ok(ResultSet::ok_msg("database detached"))
+    }
+
     fn exec_alter_table(&mut self, stmt: crate::parser::ast::AlterTableStmt) -> Result<ResultSet, String> {
         if !self.catalog.table_exists(&stmt.table) {
             return Err(format!("table '{}' does not exist", stmt.table));
@@ -1102,29 +1141,52 @@ impl Executor {
     // ── 輔助 ──────────────────────────────────────────────────────────────
 
     fn col_names(&self, table: &str) -> Result<Vec<String>, String> {
-        self.catalog.get_table(table)
-            .ok_or_else(|| format!("table '{}' not found", table))
-            .map(|m| m.schema.columns.iter().map(|c| c.name.clone()).collect())
+        if let Some((alias, name)) = table.split_once('.') {
+            self.attached.get(alias)
+                .and_then(|db| db.catalog.get_table(name))
+                .map(|m| m.schema.columns.iter().map(|c| c.name.clone()).collect())
+                .ok_or_else(|| format!("table '{}' not found", table))
+        } else {
+            self.catalog.get_table(table)
+                .map(|m| m.schema.columns.iter().map(|c| c.name.clone()).collect())
+                .ok_or_else(|| format!("table '{}' not found", table))
+        }
     }
 
 fn get_table(&mut self, name: &str) -> Result<&mut Table<SharedStorage>, String> {
-        if !self.tables.contains_key(name) {
-            let meta = self.catalog.get_table(name)
-                .ok_or_else(|| format!("table '{}' not found", name))?.clone();
-            
-            // 如果已有 root_page（已持久化），用 Table::open 載入
-            // 否則建立新的 Table
-            let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
-                Table::open(name, meta.schema.clone(), self.storage.clone(), meta.root_page, meta.row_count)
-            } else {
-                let tbl = Table::new(name, meta.schema.clone(), self.storage.clone());
-                let root = tbl.root_page();
-                self.catalog.update_table_meta(name, root, 0)?;
-                tbl
-            };
-            self.tables.insert(name.to_string(), tbl);
+        if let Some((alias, table)) = name.split_once('.') {
+            let db = self.attached.get_mut(alias)
+                .ok_or_else(|| format!("no such attached database: {}", alias))?;
+            if !db.tables.contains_key(table) {
+                let meta = db.catalog.get_table(table)
+                    .ok_or_else(|| format!("table '{}' not found in '{}'", table, alias))?.clone();
+                let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
+                    Table::open(table, meta.schema.clone(), db.storage.clone(), meta.root_page, meta.row_count)
+                } else {
+                    let tbl = Table::new(table, meta.schema.clone(), db.storage.clone());
+                    let root = tbl.root_page();
+                    db.catalog.update_table_meta(table, root, 0)?;
+                    tbl
+                };
+                db.tables.insert(table.to_string(), tbl);
+            }
+            db.tables.get_mut(table).ok_or_else(|| "internal error".to_string())
+        } else {
+            if !self.tables.contains_key(name) {
+                let meta = self.catalog.get_table(name)
+                    .ok_or_else(|| format!("table '{}' not found", name))?.clone();
+                let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
+                    Table::open(name, meta.schema.clone(), self.storage.clone(), meta.root_page, meta.row_count)
+                } else {
+                    let tbl = Table::new(name, meta.schema.clone(), self.storage.clone());
+                    let root = tbl.root_page();
+                    self.catalog.update_table_meta(name, root, 0)?;
+                    tbl
+                };
+                self.tables.insert(name.to_string(), tbl);
+            }
+            self.tables.get_mut(name).ok_or_else(|| "internal error".to_string())
         }
-        self.tables.get_mut(name).ok_or_else(|| "internal error".to_string())
     }
 }
 

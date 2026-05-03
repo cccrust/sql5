@@ -181,6 +181,17 @@ pub enum Plan {
 
     /// 空計畫（BEGIN / COMMIT / ROLLBACK）
     Transaction(TransactionOp),
+
+    /// ATTACH DATABASE
+    Attach {
+        path:  String,
+        alias: String,
+    },
+
+    /// DETACH DATABASE
+    Detach {
+        alias: String,
+    },
 }
 
 #[derive(Debug, Clone)]
