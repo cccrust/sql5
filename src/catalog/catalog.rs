@@ -27,7 +27,7 @@ use crate::btree::tree::BPlusTree;
 use crate::pager::storage::Storage;
 use crate::table::schema::Schema;
 
-use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta};
+use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta};
 use crate::table::schema::Column;
 
 pub struct Catalog<S: Storage> {
@@ -37,6 +37,8 @@ pub struct Catalog<S: Storage> {
     cache: HashMap<String, TableMeta>,
     /// 索引快取
     index_cache: HashMap<String, IndexMeta>,
+    /// 視圖快取
+    view_cache: HashMap<String, ViewMeta>,
 }
 
 impl<S: Storage> Catalog<S> {
@@ -47,13 +49,13 @@ impl<S: Storage> Catalog<S> {
     /// 建立全新的 Catalog（全新資料庫）
     pub fn new(storage: S) -> Self {
         let sys_tree = BPlusTree::new(64, storage);
-        Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new() }
+        Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new() }
     }
 
     /// 開啟已有的 Catalog（從磁碟重新載入）
     pub fn open(storage: S, root_page: usize) -> Self {
         let sys_tree = BPlusTree::open(64, storage, root_page, 0);
-        let mut catalog = Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new() };
+        let mut catalog = Catalog { sys_tree, cache: HashMap::new(), index_cache: HashMap::new(), view_cache: HashMap::new() };
         catalog.load_all();
         catalog
     }
@@ -160,6 +162,38 @@ impl<S: Storage> Catalog<S> {
         self.index_cache.keys().map(|s| s.as_str()).collect()
     }
 
+    /// 建立視圖
+    pub fn create_view(&mut self, name: &str, query: &str) -> Result<(), String> {
+        if self.view_cache.contains_key(name) {
+            return Err(format!("view '{}' already exists", name));
+        }
+        self.view_cache.insert(name.to_string(), ViewMeta::new(name, query));
+        Ok(())
+    }
+
+    /// 刪除視圖
+    pub fn drop_view(&mut self, name: &str) -> Result<(), String> {
+        if self.view_cache.remove(name).is_none() {
+            return Err(format!("view '{}' not found", name));
+        }
+        Ok(())
+    }
+
+    /// 視圖是否存在
+    pub fn view_exists(&self, name: &str) -> bool {
+        self.view_cache.contains_key(name)
+    }
+
+    /// 取得視圖
+    pub fn get_view(&self, name: &str) -> Option<&ViewMeta> {
+        self.view_cache.get(name)
+    }
+
+    /// 列出所有視圖名稱
+    pub fn view_names(&self) -> Vec<&str> {
+        self.view_cache.keys().map(|s| s.as_str()).collect()
+    }
+
     /// 重新命名資料表
     pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
         let old_meta = self.cache.remove(old_name)
@@ -177,7 +211,6 @@ impl<S: Storage> Catalog<S> {
             .ok_or_else(|| format!("table '{}' not found", table))?;
         meta.schema.columns.push(col);
         let meta_clone = meta.clone();
-        drop(meta);
         self.persist_meta(&meta_clone);
         Ok(())
     }

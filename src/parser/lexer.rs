@@ -24,6 +24,7 @@ pub enum Token {
     Real, Blob, Boolean,
     True, False,
     Pragma, Explain, Alter, Rename, To, Add, Column,  // v1.3
+    View, Reindex, Analyze, Temp,  // v1.5
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -136,6 +137,11 @@ fn keyword(s: &str) -> Option<Token> {
         "TO"          => Some(Token::To),
         "ADD"         => Some(Token::Add),
         "COLUMN"      => Some(Token::Column),
+        "VIEW"        => Some(Token::View),
+        "REINDEX"     => Some(Token::Reindex),
+        "ANALYZE"     => Some(Token::Analyze),
+        "TEMP"        => Some(Token::Temp),
+        "TEMPORARY"   => Some(Token::Temp),
         _             => None,
     }
 }
@@ -291,6 +297,12 @@ impl Lexer {
             s.push(self.advance().unwrap());
         }
         Ok(keyword(&s).unwrap_or(Token::Ident(s)))
+    }
+}
+
+impl Token {
+    pub fn is_ident(&self) -> bool {
+        matches!(self, Token::Ident(_))
     }
 }
 

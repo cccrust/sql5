@@ -127,6 +127,27 @@ pub enum Plan {
         inner: Box<Plan>,
     },
 
+    /// CREATE VIEW
+    CreateView {
+        stmt: crate::parser::ast::CreateViewStmt,
+    },
+
+    /// DROP VIEW
+    DropView {
+        name:      String,
+        if_exists: bool,
+    },
+
+    /// REINDEX
+    Reindex {
+        name: Option<String>,
+    },
+
+    /// ANALYZE
+    Analyze {
+        name: Option<String>,
+    },
+
     /// 子查詢作為掃描來源（FROM (SELECT ...)）
     SubqueryScan {
         query:  Box<Plan>,

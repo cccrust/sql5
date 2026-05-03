@@ -38,6 +38,22 @@ impl IndexMeta {
     }
 }
 
+/// View 的描述
+#[derive(Debug, Clone)]
+pub struct ViewMeta {
+    pub name:  String,
+    pub query: String,
+}
+
+impl ViewMeta {
+    pub fn new(name: &str, query: &str) -> Self {
+        ViewMeta {
+            name: name.to_string(),
+            query: query.to_string(),
+        }
+    }
+}
+
 // ------------------------------------------------------------------ //
 //  TableMeta 序列化（存進系統表）                                      //
 // ------------------------------------------------------------------ //

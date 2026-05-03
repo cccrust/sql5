@@ -82,6 +82,8 @@ impl Parser {
             Token::Alter    => Ok(Statement::AlterTable(self.parse_alter_table()?)),
             Token::Pragma   => Ok(Statement::Pragma(self.parse_pragma()?)),
             Token::Explain  => Ok(Statement::Explain(self.parse_explain()?)),
+            Token::Reindex  => Ok(Statement::Reindex(self.parse_reindex()?)),
+            Token::Analyze  => Ok(Statement::Analyze(self.parse_analyze()?)),
             t => Err(format!("unexpected token {:?}", t)),
         }
     }
@@ -310,8 +312,25 @@ impl Parser {
         match self.peek().clone() {
             Token::Table => Ok(Statement::CreateTable(self.parse_create_table()?)),
             Token::Index => Ok(Statement::CreateIndex(self.parse_create_index(unique)?)),
-            t => Err(format!("expected TABLE or INDEX after CREATE, got {:?}", t)),
+            Token::View  => Ok(Statement::CreateView(self.parse_create_view()?)),
+            t => Err(format!("expected TABLE, INDEX, or VIEW after CREATE, got {:?}", t)),
         }
+    }
+
+    fn parse_create_view(&mut self) -> Result<CreateViewStmt, String> {
+        self.eat(&Token::View)?;
+        let if_not_exists = if self.check(&Token::If) {
+            self.advance();
+            self.eat(&Token::Not)?;
+            self.eat(&Token::Exists)?;
+            true
+        } else { false };
+        let temp = self.check(&Token::Temp);
+        if temp { self.advance(); }
+        let name = self.eat_ident()?;
+        self.eat(&Token::As)?;
+        let query = Box::new(self.parse_select()?);
+        Ok(CreateViewStmt { if_not_exists, temp, name, query })
     }
 
     fn parse_create_table(&mut self) -> Result<CreateTableStmt, String> {
@@ -424,14 +443,15 @@ impl Parser {
         Ok(CreateIndexStmt { unique, name, table, columns })
     }
 
-    // ── DROP TABLE / DROP INDEX ─────────────────────────────────────────────
+    // ── DROP TABLE / DROP INDEX / DROP VIEW ─────────────────────────────────
 
     fn parse_drop(&mut self) -> Result<Statement, String> {
         self.eat(&Token::Drop)?;
         match self.peek().clone() {
             Token::Table => Ok(Statement::DropTable(self.parse_drop_table()?)),
             Token::Index => Ok(Statement::DropIndex(self.parse_drop_index()?)),
-            t => Err(format!("expected TABLE or INDEX after DROP, got {:?}", t)),
+            Token::View  => Ok(Statement::DropView(self.parse_drop_view()?)),
+            t => Err(format!("expected TABLE, INDEX, or VIEW after DROP, got {:?}", t)),
         }
     }
 
@@ -455,6 +475,37 @@ impl Parser {
         } else { false };
         let name = self.eat_ident()?;
         Ok(DropIndexStmt { if_exists, name })
+    }
+
+    fn parse_drop_view(&mut self) -> Result<DropViewStmt, String> {
+        self.eat(&Token::View)?;
+        let if_exists = if self.check(&Token::If) {
+            self.advance();
+            self.eat(&Token::Exists)?;
+            true
+        } else { false };
+        let name = self.eat_ident()?;
+        Ok(DropViewStmt { if_exists, name })
+    }
+
+    // ── REINDEX ─────────────────────────────────────────────────────────────
+
+    fn parse_reindex(&mut self) -> Result<ReindexStmt, String> {
+        self.eat(&Token::Reindex)?;
+        let name = if self.peek().is_ident() {
+            Some(self.eat_ident()?)
+        } else { None };
+        Ok(ReindexStmt { name })
+    }
+
+    // ── ANALYZE ─────────────────────────────────────────────────────────────
+
+    fn parse_analyze(&mut self) -> Result<AnalyzeStmt, String> {
+        self.eat(&Token::Analyze)?;
+        let name = if self.peek().is_ident() {
+            Some(self.eat_ident()?)
+        } else { None };
+        Ok(AnalyzeStmt { name })
     }
 
     // ── ALTER TABLE ───────────────────────────────────────────────────────

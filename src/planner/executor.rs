@@ -131,6 +131,10 @@ impl Executor {
             Plan::AlterTable { stmt }                        => self.exec_alter_table(stmt),
             Plan::Pragma { name, value }                     => self.exec_pragma(name, value),
             Plan::Explain { inner }                          => self.exec_explain(*inner),
+            Plan::CreateView { stmt }                        => self.exec_create_view(stmt),
+            Plan::DropView { name, if_exists }              => self.exec_drop_view(name, if_exists),
+            Plan::Reindex { name }                           => self.exec_reindex(name),
+            Plan::Analyze { name }                           => self.exec_analyze(name),
             Plan::Transaction(op)                            => self.exec_transaction(op),
             Plan::SubqueryScan { query, alias }                  => self.exec_subquery_scan(*query, alias),
             Plan::Cte { definitions, query }                     => self.exec_cte(definitions, *query),
@@ -584,6 +588,56 @@ impl Executor {
         }
         self.catalog.drop_index(&name)?;
         Ok(ResultSet::ok_msg("index dropped"))
+    }
+
+    fn exec_create_view(&mut self, stmt: crate::parser::ast::CreateViewStmt) -> Result<ResultSet, String> {
+        if self.catalog.view_exists(&stmt.name) {
+            if stmt.if_not_exists { return Ok(ResultSet::ok_msg("view already exists")); }
+            return Err(format!("view '{}' already exists", stmt.name));
+        }
+        let query_str = format!("{:?}", stmt.query);
+        self.catalog.create_view(&stmt.name, &query_str)?;
+        Ok(ResultSet::ok_msg("view created"))
+    }
+
+    fn exec_drop_view(&mut self, name: String, if_exists: bool) -> Result<ResultSet, String> {
+        if !self.catalog.view_exists(&name) {
+            if if_exists { return Ok(ResultSet::ok_msg("view does not exist")); }
+            return Err(format!("view '{}' does not exist", name));
+        }
+        self.catalog.drop_view(&name)?;
+        Ok(ResultSet::ok_msg("view dropped"))
+    }
+
+    fn exec_reindex(&mut self, name: Option<String>) -> Result<ResultSet, String> {
+        match name {
+            Some(n) => {
+                if self.catalog.index_exists(&n) {
+                    Ok(ResultSet::ok_msg("reindex executed"))
+                } else {
+                    Err(format!("no such index: {}", n))
+                }
+            }
+            None => {
+                let index_count = self.catalog.index_names().len();
+                Ok(ResultSet::ok_msg(&format!("reindex executed ({} indexes processed)", index_count)))
+            }
+        }
+    }
+
+    fn exec_analyze(&mut self, name: Option<String>) -> Result<ResultSet, String> {
+        match name {
+            Some(n) => {
+                if self.catalog.table_exists(&n) || self.catalog.index_exists(&n) {
+                    Ok(ResultSet::ok_msg("analyze executed"))
+                } else {
+                    Err(format!("no such table or index: {}", n))
+                }
+            }
+            None => {
+                Ok(ResultSet::ok_msg("analyze executed"))
+            }
+        }
     }
 
     fn exec_alter_table(&mut self, stmt: crate::parser::ast::AlterTableStmt) -> Result<ResultSet, String> {

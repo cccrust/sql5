@@ -484,7 +484,46 @@ OUT=$(run_sql \
     "ALTER TABLE t ADD COLUMN email TEXT;")
 assert_contains "ALTER TABLE ADD COLUMN" "column added" "$OUT"
 
-# ── 15. PRAGMA ─────────────────────────────────────────────────────────
+# ── 15. VIEW / REINDEX / ANALYZE ────────────────────────────────────────
+section "VIEW / REINDEX / ANALYZE"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "INSERT INTO t VALUES (1, 'Alice');" \
+    "INSERT INTO t VALUES (2, 'Bob');" \
+    "CREATE VIEW v AS SELECT * FROM t WHERE id = 1;")
+assert_contains "CREATE VIEW" "view created" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "INSERT INTO t VALUES (1, 'Alice');" \
+    "CREATE VIEW v2 AS SELECT * FROM t;" \
+    "DROP VIEW v2;")
+assert_contains "DROP VIEW" "view dropped" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "DROP VIEW IF EXISTS v_nonexistent;")
+assert_contains "DROP VIEW IF EXISTS (no-op)" "view does not exist" "$OUT"
+
+OUT=$(run_sql "REINDEX;")
+assert_contains "REINDEX without name" "reindex executed" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, name TEXT);" \
+    "CREATE INDEX idx ON t (name);" \
+    "REINDEX idx;")
+assert_contains "REINDEX with name" "reindex executed" "$OUT"
+
+OUT=$(run_sql "ANALYZE;")
+assert_contains "ANALYZE without name" "analyze executed" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t2 (id INTEGER);" \
+    "ANALYZE t2;")
+assert_contains "ANALYZE with table name" "analyze executed" "$OUT"
+
+# ── 16. PRAGMA ─────────────────────────────────────────────────────────
 section "PRAGMA"
 
 OUT=$(run_sql "PRAGMA journal_mode;")
@@ -499,7 +538,7 @@ assert_contains "PRAGMA cache_size" "256" "$OUT"
 OUT=$(run_sql "PRAGMA freelist_count;")
 assert_contains "PRAGMA freelist_count" "0" "$OUT"
 
-# ── 16. EXPLAIN ────────────────────────────────────────────────────────
+# ── 17. EXPLAIN ────────────────────────────────────────────────────────
 section "EXPLAIN"
 
 OUT=$(run_sql \
@@ -507,7 +546,7 @@ OUT=$(run_sql \
     "EXPLAIN SELECT * FROM users WHERE id = 1;")
 assert_contains "EXPLAIN shows plan" "SeqScan\|IndexScan" "$OUT"
 
-# ── 17. Enhanced Dot Commands ──────────────────────────────────────────
+# ── 18. Enhanced Dot Commands ──────────────────────────────────────────
 section "Enhanced Dot Commands"
 
 OUT=$(run_sql \
@@ -518,7 +557,7 @@ assert_contains ".tables shows table" "t" "$OUT"
 OUT=$(run_sql ".databases")
 assert_contains ".databases" "(memory)" "$OUT"
 
-# ── 18. WAL Transactions ──────────────────────────────────────────────
+# ── 19. WAL Transactions ──────────────────────────────────────────────
 section "WAL Transactions"
 
 OUT=$(run_sql \

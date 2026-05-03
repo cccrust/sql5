@@ -15,6 +15,10 @@ pub enum Statement {
     AlterTable(AlterTableStmt),
     Pragma(PragmaStmt),
     Explain(ExplainStmt),
+    CreateView(CreateViewStmt),
+    DropView(DropViewStmt),
+    Reindex(ReindexStmt),
+    Analyze(AnalyzeStmt),
     Begin,
     Commit,
     Rollback,
@@ -205,6 +209,38 @@ pub struct PragmaStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExplainStmt {
     pub inner: Box<Statement>,
+}
+
+// ── CREATE VIEW ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateViewStmt {
+    pub if_not_exists: bool,
+    pub temp:         bool,
+    pub name:         String,
+    pub query:        Box<SelectStmt>,
+}
+
+// ── DROP VIEW ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropViewStmt {
+    pub if_exists: bool,
+    pub name:      String,
+}
+
+// ── REINDEX ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReindexStmt {
+    pub name: Option<String>,
+}
+
+// ── ANALYZE ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnalyzeStmt {
+    pub name: Option<String>,
 }
 
 // ── 運算式 ────────────────────────────────────────────────────────────────

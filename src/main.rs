@@ -1,3 +1,5 @@
+#![allow(dead_code, unused)]
+
 mod btree;
 mod catalog;
 mod fts;

@@ -34,6 +34,10 @@ impl<'a, S: Storage> Planner<'a, S> {
                 let inner = self.plan(*s.inner)?;
                 Ok(Plan::Explain { inner: Box::new(inner) })
             }
+            Statement::CreateView(s)  => Ok(Plan::CreateView { stmt: s }),
+            Statement::DropView(s)    => Ok(Plan::DropView { name: s.name, if_exists: s.if_exists }),
+            Statement::Reindex(s)     => Ok(Plan::Reindex { name: s.name }),
+            Statement::Analyze(s)     => Ok(Plan::Analyze { name: s.name }),
             Statement::Begin          => Ok(Plan::Transaction(TransactionOp::Begin)),
             Statement::Commit         => Ok(Plan::Transaction(TransactionOp::Commit)),
             Statement::Rollback       => Ok(Plan::Transaction(TransactionOp::Rollback)),
@@ -56,8 +60,20 @@ impl<'a, S: Storage> Planner<'a, S> {
         // 1. 掃描來源表或子查詢
         let mut plan = if let Some(from_item) = s.from {
             match from_item {
-                FromItem::Table(tref) =>
-                    self.plan_table_scan(&tref.name, tref.alias.as_deref(), s.where_.clone())?,
+                FromItem::Table(tref) => {
+                    // 檢查是否為視圖
+                    if self.catalog.view_exists(&tref.name) {
+                        let view_meta = self.catalog.get_view(&tref.name).unwrap();
+                        let view_stmts = crate::parser::parse(&view_meta.query)
+                            .map_err(|e| format!("invalid view query: {}", e))?;
+                        if let crate::parser::ast::Statement::Select(view_select) = view_stmts.into_iter().next().unwrap() {
+                            let inner = self.plan_select(view_select)?;
+                            return Ok(Plan::SubqueryScan { query: Box::new(inner), alias: tref.alias.unwrap_or_else(|| tref.name.clone()) });
+                        }
+                        return Err(format!("view '{}' query is not a SELECT", tref.name));
+                    }
+                    self.plan_table_scan(&tref.name, tref.alias.as_deref(), s.where_.clone())?
+                }
                 FromItem::Subquery { query, alias } => {
                     let inner = self.plan_select(*query)?;
                     Plan::SubqueryScan { query: Box::new(inner), alias }
