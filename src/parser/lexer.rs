@@ -23,8 +23,9 @@ pub enum Token {
     KwInteger, KwText,       // 型別關鍵字
     Real, Blob, Boolean,
     True, False,
-    Pragma, Explain, Alter, Rename, To, Add, Column, Do,  // v1.3
+    Pragma, Explain, Alter, Rename, To, Add, Column, Do, Of,  // v1.3
     View, Reindex, Analyze, Temp, Conflict, Nothing, Union, Check,  // v1.5-1.8
+    Trigger, Before, After, Instead, Each, Row, For,  // v1.9
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -147,6 +148,14 @@ fn keyword(s: &str) -> Option<Token> {
         "NOTHING"     => Some(Token::Nothing),
         "UNION"       => Some(Token::Union),
         "CHECK"       => Some(Token::Check),
+        "TRIGGER"     => Some(Token::Trigger),
+        "BEFORE"      => Some(Token::Before),
+        "AFTER"       => Some(Token::After),
+        "INSTEAD"      => Some(Token::Instead),
+        "OF"          => Some(Token::Of),
+        "FOR"         => Some(Token::For),
+        "EACH"        => Some(Token::Each),
+        "ROW"         => Some(Token::Row),
         _             => None,
     }
 }
