@@ -1016,7 +1016,7 @@ fn expr_from_value(v: Value) -> crate::parser::ast::Expr {
     }
 }
 
-fn eval_expr(expr: &Expr, row: &Row, cols: &[String]) -> Result<Value, String> {
+pub(crate) fn eval_expr(expr: &Expr, row: &Row, cols: &[String]) -> Result<Value, String> {
     match expr {
         Expr::LitInt(v)   => Ok(Value::Integer(*v)),
         Expr::LitFloat(v) => Ok(Value::Float(*v)),
@@ -1316,7 +1316,7 @@ fn row_to_key(row: &Row) -> Result<Key, String> {
     }
 }
 
-fn is_truthy(v: &Value) -> bool {
+pub(crate) fn is_truthy(v: &Value) -> bool {
     match v {
         Value::Boolean(b)  => *b,
         Value::Integer(i)  => *i != 0,

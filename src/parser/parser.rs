@@ -403,6 +403,13 @@ impl Parser {
                     cons.push(ColumnConstraint::PrimaryKey { autoincrement });
                 }
                 Token::Unique => { self.advance(); cons.push(ColumnConstraint::Unique); }
+                Token::Check => {
+                    self.advance();
+                    self.eat(&Token::LParen)?;
+                    let expr = self.parse_expr()?;
+                    self.eat(&Token::RParen)?;
+                    cons.push(ColumnConstraint::Check(expr));
+                }
                 Token::References => {
                     self.advance();
                     let table = self.eat_ident()?;

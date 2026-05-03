@@ -620,6 +620,19 @@ OUT=$(run_sql \
     "SELECT COUNT(DISTINCT cat) FROM t;")
 assert_contains "COUNT DISTINCT" "2" "$OUT"
 
+# ── 18. CHECK Constraint ───────────────────────────────────────────────
+section "CHECK Constraint"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER CHECK (id > 0));" \
+    "INSERT INTO t VALUES (1);")
+assert_contains "CHECK pass" "1 row" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER CHECK (id > 0));" \
+    "INSERT INTO t VALUES (-1);")
+assert_contains "CHECK fail" "CHECK constraint failed" "$OUT"
+
 # ── 19. PRAGMA ─────────────────────────────────────────────────────────
 section "PRAGMA"
 

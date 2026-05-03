@@ -155,6 +155,7 @@ pub enum ColumnConstraint {
     PrimaryKey { autoincrement: bool },
     Unique,
     Default(Expr),
+    Check(Expr),
     References { table: String, column: Option<String> },
 }
 

@@ -17,7 +17,7 @@ use crate::table::schema::Schema;
 pub enum Constraint {
     NotNull  { column: String },
     Unique   { columns: Vec<String> },
-    Check    { expr_sql: String },           // CHECK 運算式（原始 SQL）
+    Check    { expr: crate::parser::ast::Expr },  // CHECK 運算式 AST
     ForeignKey {
         columns:    Vec<String>,
         ref_table:  String,
@@ -91,11 +91,13 @@ pub fn check_row(
                 }
             }
 
-            Constraint::Check { expr_sql } => {
-                // 簡單 CHECK：只支援 IS NOT NULL 與比較
-                // 完整實作需要把 expr_sql 送進 parser→eval_expr
-                // 此處先做基礎版：始終通過（TODO: 接上 parser）
-                let _ = expr_sql;
+            Constraint::Check { expr } => {
+                // 評估 CHECK 表達式
+                if let Ok(val) = crate::planner::executor::eval_expr(expr, row, &schema.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>()) {
+                    if !crate::planner::executor::is_truthy(&val) {
+                        return Err("CHECK constraint failed".to_string());
+                    }
+                }
             }
 
             Constraint::ForeignKey { columns, ref_table, ref_columns } => {
@@ -139,6 +141,9 @@ pub fn constraints_from_ast(
                     tc.add(Constraint::NotNull { column: col.name.clone() });
                 }
                 ColumnConstraint::Default(_) => {} // 預設值由 executor 處理
+                ColumnConstraint::Check(expr) => {
+                    tc.add(Constraint::Check { expr: expr.clone() });
+                }
                 ColumnConstraint::References { table, column } => {
                     let ref_col = column.clone().unwrap_or_else(|| "id".to_string());
                     tc.add(Constraint::ForeignKey {
