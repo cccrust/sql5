@@ -78,11 +78,8 @@ impl<S: Storage> Table<S> {
 
     /// 全表掃描（從最小 key 到最大 key）
     pub fn scan(&mut self) -> Vec<Row> {
-        let min_key = Key::Integer(i64::MIN);
-        let max_key = Key::Integer(i64::MAX);
-        // 對 Text key 的表需要不同範圍，先用 Integer 覆蓋數字主鍵
         self.tree
-            .range_search(&min_key, &max_key)
+            .scan_all()
             .into_iter()
             .map(|record| serialize::deserialize(&self.schema, &record.value))
             .collect()

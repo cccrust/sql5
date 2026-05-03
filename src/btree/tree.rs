@@ -77,6 +77,32 @@ impl<S: Storage> BPlusTree<S> {
     pub fn root_page(&self) -> usize { self.root }
     pub fn flush(&mut self) { self.storage.flush(); }
 
+    pub fn scan_all(&mut self) -> Vec<Record> {
+        if self.size == 0 { return Vec::new(); }
+        let mut results = Vec::with_capacity(self.size);
+        let mut idx = self.first_leaf();
+        loop {
+            let leaf = self.storage.read_node(idx);
+            for record in leaf.records {
+                results.push(record);
+            }
+            match leaf.next_leaf {
+                Some(n) => idx = n,
+                None => break,
+            }
+        }
+        results
+    }
+
+    fn first_leaf(&mut self) -> usize {
+        let mut idx = self.root;
+        loop {
+            let node = self.storage.read_node(idx);
+            if node.is_leaf() { return idx; }
+            idx = node.children[0];
+        }
+    }
+
     fn alloc_node(&mut self, node: Node) -> usize {
         let id = self.storage.alloc_page();
         self.storage.write_node(id, &node);
