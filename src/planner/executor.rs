@@ -138,6 +138,7 @@ impl Executor {
             Plan::Transaction(op)                            => self.exec_transaction(op),
             Plan::SubqueryScan { query, alias }                  => self.exec_subquery_scan(*query, alias),
             Plan::Cte { definitions, query }                     => self.exec_cte(definitions, *query),
+            Plan::SetOperation { left, right, op }             => self.exec_set_operation(*left, *right, op.clone()),
         }
     }
 
@@ -228,7 +229,8 @@ impl Executor {
                         if first {
                             out_cols.push(alias.clone().unwrap_or_else(|| expr_name(expr)));
                         }
-                        vals.push(eval_expr(expr, &ctx, &src.columns)?);
+                        let resolved = self.resolve_expr(expr.clone())?;
+                        vals.push(eval_expr(&resolved, &ctx, &src.columns)?);
                     }
                 }
             }
@@ -294,7 +296,8 @@ impl Executor {
         // 分組
         type Group = (Vec<Value>, Vec<Row>);
         let mut groups: Vec<Group> = Vec::new();
-        for rv in src.rows {
+        let all_src_rows = src.rows.clone();
+        for rv in all_src_rows.clone() {
             let row = Row::new(rv);
             let key: Vec<Value> = group_by.iter()
                 .map(|e| eval_expr(e, &row, &cols).unwrap_or(Value::Null))
@@ -305,7 +308,10 @@ impl Executor {
                 groups.push((key, vec![row]));
             }
         }
-        if groups.is_empty() { groups.push((vec![], vec![])); }
+        if groups.is_empty() {
+            let all_rows: Vec<Row> = all_src_rows.into_iter().map(Row::new).collect();
+            groups.push((vec![], all_rows));
+        }
 
         let mut out_cols: Vec<String> = Vec::new();
         let mut out_rows: Vec<Vec<Value>> = Vec::new();
@@ -841,6 +847,21 @@ impl Executor {
                 let exists = !rs.rows.is_empty();
                 Ok(Expr::LitBool(if negated { !exists } else { exists }))
             }
+            Expr::ScalarSubquery(query) => {
+                let plan = crate::planner::planner::Planner::new(&self.catalog).plan(
+                    Statement::Select(*query))?;
+                let rs = self.execute(plan)?;
+                if rs.rows.is_empty() {
+                    Ok(Expr::LitNull)
+                } else {
+                    let first_row = &rs.rows[0];
+                    if first_row.is_empty() {
+                        Ok(Expr::LitNull)
+                    } else {
+                        Ok(expr_from_value(first_row[0].clone()))
+                    }
+                }
+            }
             Expr::BinOp { left, op, right } => {
                 let left  = self.resolve_expr(*left)?;
                 let right = self.resolve_expr(*right)?;
@@ -871,6 +892,28 @@ impl Executor {
         // 清除 CTE 快取（避免污染後續查詢）
         self.cte_cache.clear();
         Ok(result)
+    }
+
+    fn exec_set_operation(&mut self, left: Plan, right: Plan, op: crate::planner::plan::SetOp) -> Result<ResultSet, String> {
+        let left_rs = self.execute(left)?;
+        let right_rs = self.execute(right)?;
+
+        // 合併 column names（假設兩邊 column 結構相同）
+        let columns = left_rs.columns.clone();
+
+        let mut rows = left_rs.rows;
+        rows.extend(right_rs.rows);
+
+        // UNION 需要去除重複
+        if matches!(op, crate::planner::plan::SetOp::Union) {
+            let mut seen = std::collections::HashSet::new();
+            rows.retain(|row| {
+                let key = format!("{:?}", row);
+                seen.insert(key)
+            });
+        }
+
+        Ok(ResultSet { columns, rows })
     }
 
     fn exec_transaction(&mut self, op: TransactionOp) -> Result<ResultSet, String> {
@@ -1166,7 +1209,7 @@ fn eval_expr(expr: &Expr, row: &Row, cols: &[String]) -> Result<Value, String> {
 }
 
 fn eval_aggregate(expr: &Expr, rows: &[Row], cols: &[String]) -> Result<Value, String> {
-    if let Expr::Function { name, args, .. } = expr {
+    if let Expr::Function { name, args, distinct } = expr {
         let vals: Vec<Value> = rows.iter().map(|r| {
             if args.is_empty() || matches!(args[0], Expr::Column { name: ref n, .. } if n == "*") {
                 Ok(Value::Integer(1))
@@ -1174,7 +1217,19 @@ fn eval_aggregate(expr: &Expr, rows: &[Row], cols: &[String]) -> Result<Value, S
         }).collect::<Result<_, String>>()?;
 
         match name.as_str() {
-            "COUNT" => Ok(Value::Integer(vals.iter().filter(|v| !matches!(v, Value::Null)).count() as i64)),
+            "COUNT" => {
+                if *distinct {
+                    // COUNT(DISTINCT col) - 需要去除重複
+                    let mut seen = std::collections::HashSet::new();
+                    let count = vals.iter()
+                        .filter(|v| !matches!(v, Value::Null))
+                        .filter(|v| seen.insert(format!("{:?}", v)))
+                        .count();
+                    Ok(Value::Integer(count as i64))
+                } else {
+                    Ok(Value::Integer(vals.iter().filter(|v| !matches!(v, Value::Null)).count() as i64))
+                }
+            }
             "SUM" => {
                 let s: f64 = vals.iter().filter_map(|v| match v {
                     Value::Integer(i) => Some(*i as f64), Value::Float(f) => Some(*f), _ => None }).sum();

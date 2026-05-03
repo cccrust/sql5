@@ -24,7 +24,7 @@ pub enum Token {
     Real, Blob, Boolean,
     True, False,
     Pragma, Explain, Alter, Rename, To, Add, Column, Do,  // v1.3
-    View, Reindex, Analyze, Temp, Conflict, Nothing,  // v1.5/v1.6
+    View, Reindex, Analyze, Temp, Conflict, Nothing, Union,  // v1.5/v1.6/v1.7
 
     // ── 識別符 ──────────────────────────────────────────────────────────
     Ident(String),
@@ -145,6 +145,7 @@ fn keyword(s: &str) -> Option<Token> {
         "TEMPORARY"   => Some(Token::Temp),
         "CONFLICT"    => Some(Token::Conflict),
         "NOTHING"     => Some(Token::Nothing),
+        "UNION"       => Some(Token::Union),
         _             => None,
     }
 }

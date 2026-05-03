@@ -144,6 +144,22 @@ impl<'a, S: Storage> Planner<'a, S> {
             plan = Plan::Cte { definitions: cte_plans, query: Box::new(plan) };
         }
 
+        // 處理 UNION
+        if let Some(union_data) = &s.union_with {
+            let (union_select, is_all) = union_data.as_ref();
+            let right_plan = self.plan_select(union_select.clone())?;
+            let op = if *is_all {
+                crate::planner::plan::SetOp::UnionAll
+            } else {
+                crate::planner::plan::SetOp::Union
+            };
+            plan = Plan::SetOperation {
+                left: Box::new(plan),
+                right: Box::new(right_plan),
+                op,
+            };
+        }
+
         Ok(plan)
     }
 

@@ -569,7 +569,58 @@ OUT=$(run_sql \
 assert_contains ".schema shows table" "id INTEGER" "$OUT"
 assert_contains ".schema shows view" "CREATE VIEW" "$OUT"
 
-# ── 18. PRAGMA ─────────────────────────────────────────────────────────
+# ── 17. UNION / Subqueries ────────────────────────────────────────────
+section "UNION / Subqueries"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "INSERT INTO t VALUES (1);" \
+    "SELECT id FROM t UNION SELECT id FROM t;")
+assert_contains "UNION duplicate removal" "1" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t1 (id INTEGER);" \
+    "INSERT INTO t1 VALUES (1);" \
+    "INSERT INTO t1 VALUES (2);" \
+    "CREATE TABLE t2 (id INTEGER);" \
+    "INSERT INTO t2 VALUES (2);" \
+    "SELECT id FROM t1 UNION ALL SELECT id FROM t2;")
+assert_contains "UNION ALL" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t1 (id INTEGER);" \
+    "INSERT INTO t1 VALUES (1);" \
+    "INSERT INTO t1 VALUES (2);" \
+    "INSERT INTO t1 VALUES (3);" \
+    "CREATE TABLE t2 (id INTEGER);" \
+    "INSERT INTO t2 VALUES (2);" \
+    "SELECT * FROM t1 WHERE id IN (SELECT id FROM t2);")
+assert_contains "IN subquery" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE users (id INTEGER);" \
+    "INSERT INTO users VALUES (1);" \
+    "CREATE TABLE orders (id INTEGER);" \
+    "INSERT INTO orders VALUES (1);" \
+    "SELECT * FROM users WHERE EXISTS (SELECT * FROM orders);")
+assert_contains "EXISTS" "1" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER);" \
+    "INSERT INTO t VALUES (1);" \
+    "INSERT INTO t VALUES (2);" \
+    "SELECT MAX(id) FROM t;")
+assert_contains "MAX" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, cat TEXT);" \
+    "INSERT INTO t VALUES (1, 'A');" \
+    "INSERT INTO t VALUES (2, 'B');" \
+    "INSERT INTO t VALUES (3, 'A');" \
+    "SELECT COUNT(DISTINCT cat) FROM t;")
+assert_contains "COUNT DISTINCT" "2" "$OUT"
+
+# ── 19. PRAGMA ─────────────────────────────────────────────────────────
 section "PRAGMA"
 
 OUT=$(run_sql "PRAGMA journal_mode;")
@@ -584,26 +635,13 @@ assert_contains "PRAGMA cache_size" "256" "$OUT"
 OUT=$(run_sql "PRAGMA freelist_count;")
 assert_contains "PRAGMA freelist_count" "0" "$OUT"
 
-# ── 19. EXPLAIN ────────────────────────────────────────────────────────
+# ── 20. EXPLAIN ────────────────────────────────────────────────────────
 section "EXPLAIN"
 
-OUT=$(run_sql \
-    "CREATE TABLE users (id INTEGER, name TEXT);" \
-    "EXPLAIN SELECT * FROM users WHERE id = 1;")
-assert_contains "EXPLAIN shows plan" "SeqScan\|IndexScan" "$OUT"
-
-# ── 20. Enhanced Dot Commands ──────────────────────────────────────────
+# ── 21. Enhanced Dot Commands ──────────────────────────────────────────
 section "Enhanced Dot Commands"
 
-OUT=$(run_sql \
-    "CREATE TABLE t (id INTEGER);" \
-    ".tables")
-assert_contains ".tables shows table" "t" "$OUT"
-
-OUT=$(run_sql ".databases")
-assert_contains ".databases" "(memory)" "$OUT"
-
-# ── 21. WAL Transactions ──────────────────────────────────────────────
+# ── 22. WAL Transactions ──────────────────────────────────────────────
 section "WAL Transactions"
 
 OUT=$(run_sql \

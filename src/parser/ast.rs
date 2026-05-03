@@ -39,6 +39,7 @@ pub struct SelectStmt {
     pub order_by:  Vec<OrderItem>,
     pub limit:     Option<Expr>,
     pub offset:    Option<Expr>,
+    pub union_with: Option<Box<(SelectStmt, bool)>>,  // (select_stmt, is_all)
 }
 
 #[derive(Debug, Clone, PartialEq)]

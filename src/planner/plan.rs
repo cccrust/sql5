@@ -160,6 +160,13 @@ pub enum Plan {
         query:       Box<Plan>,
     },
 
+    /// UNION / UNION ALL
+    SetOperation {
+        left:  Box<Plan>,
+        right: Box<Plan>,
+        op:    SetOp,
+    },
+
     /// 空計畫（BEGIN / COMMIT / ROLLBACK）
     Transaction(TransactionOp),
 }
@@ -177,4 +184,10 @@ pub enum JoinKind {
 #[derive(Debug, Clone)]
 pub enum TransactionOp {
     Begin, Commit, Rollback,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetOp {
+    Union,
+    UnionAll,
 }

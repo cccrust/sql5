@@ -131,7 +131,13 @@ impl Parser {
             Some(self.parse_expr()?)
         } else { None };
 
-        Ok(SelectStmt { with, distinct, columns, from, joins, where_, group_by, having, order_by, limit, offset })
+        let union_with = if self.maybe(&Token::Union) {
+            let is_all = self.maybe(&Token::All);
+            let right = self.parse_select()?;
+            Some(Box::new((right, is_all)))
+        } else { None };
+
+        Ok(SelectStmt { with, distinct, columns, from, joins, where_, group_by, having, order_by, limit, offset, union_with })
     }
 
     fn parse_select_items(&mut self) -> Result<Vec<SelectItem>, String> {
