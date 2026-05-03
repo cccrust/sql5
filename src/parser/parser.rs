@@ -123,13 +123,27 @@ impl Parser {
             self.parse_order_items()?
         } else { vec![] };
 
-        let limit = if self.maybe(&Token::Limit) {
-            Some(self.parse_expr()?)
-        } else { None };
-
-        let offset = if self.maybe(&Token::Offset) {
-            Some(self.parse_expr()?)
-        } else { None };
+        let (limit, offset) = if self.maybe(&Token::Limit) {
+            let first = self.parse_expr()?;
+            // LIMIT n, m - MySQL style (n = offset, m = limit)
+            // LIMIT n OFFSET m - standard (n = limit, m = offset)
+            if self.check(&Token::Comma) {
+                self.advance();
+                let limit = self.parse_expr()?;
+                let offset = Some(first);
+                (Some(limit), offset)
+            } else if self.maybe(&Token::Offset) {
+                let offset = Some(self.parse_expr()?);
+                (Some(first), offset)
+            } else {
+                (Some(first), None)
+            }
+        } else {
+            let offset = if self.maybe(&Token::Offset) {
+                Some(self.parse_expr()?)
+            } else { None };
+            (None, offset)
+        };
 
         let union_with = if self.maybe(&Token::Union) {
             let is_all = self.maybe(&Token::All);
@@ -685,6 +699,15 @@ impl Parser {
         if self.maybe(&Token::Like) {
             let pattern = self.parse_addition()?;
             return Ok(Expr::Like { expr: Box::new(left), pattern: Box::new(pattern), negated: negated_like });
+        }
+
+        // [NOT] GLOB
+        let negated_glob = if !negated_in && self.check(&Token::Not) && self.peek2() == &Token::GLOB {
+            self.advance(); true
+        } else { false };
+        if self.maybe(&Token::GLOB) {
+            let pattern = self.parse_addition()?;
+            return Ok(Expr::Glob { expr: Box::new(left), pattern: Box::new(pattern), negated: negated_glob });
         }
 
         let op = match self.peek() {

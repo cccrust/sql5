@@ -294,8 +294,9 @@ pub enum Expr {
     // 純量子查詢 (SELECT ...)
     ScalarSubquery(Box<SelectStmt>),
 
-    // LIKE
+    // LIKE / GLOB
     Like    { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
+    Glob    { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
 
     // 子查詢（留待後續實作）
     Subquery(Box<SelectStmt>),

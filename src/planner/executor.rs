@@ -1094,6 +1094,14 @@ pub(crate) fn eval_expr(expr: &Expr, row: &Row, cols: &[String]) -> Result<Value
             } else { Ok(Value::Boolean(false)) }
         }
 
+        Expr::Glob { expr, pattern, negated } => {
+            if let (Value::Text(s), Value::Text(pat)) =
+                (eval_expr(expr, row, cols)?, eval_expr(pattern, row, cols)?) {
+                let m = sql_glob(&s, &pat);
+                Ok(Value::Boolean(if *negated { !m } else { m }))
+            } else { Ok(Value::Boolean(false)) }
+        }
+
         Expr::Cast { expr, to } => {
             let v = eval_expr(expr, row, cols)?;
             match to {
@@ -1417,6 +1425,40 @@ fn like_match(s: &[char], p: &[char]) -> bool {
             (*pc == '_' || pc.to_uppercase().eq(sc.to_uppercase())) && like_match(sr, pr)
         }
     }
+}
+
+fn sql_glob(s: &str, pat: &str) -> bool {
+    glob_match(s, pat)
+}
+
+fn glob_match(s: &str, p: &str) -> bool {
+    let s_chars: Vec<char> = s.chars().collect();
+    let p_chars: Vec<char> = p.chars().collect();
+    let s_len = s_chars.len();
+    let p_len = p_chars.len();
+
+    let mut dp = vec![vec![false; p_len + 1]; s_len + 1];
+    dp[0][0] = true;
+
+    for j in 1..=p_len {
+        if p_chars[j-1] == '*' {
+            dp[0][j] = dp[0][j-1];
+        }
+    }
+
+    for i in 1..=s_len {
+        for j in 1..=p_len {
+            if p_chars[j-1] == '*' {
+                dp[i][j] = dp[i-1][j] || dp[i][j-1];
+            } else if p_chars[j-1] == '?' || s_chars[i-1] == p_chars[j-1] {
+                dp[i][j] = dp[i-1][j-1];
+            } else {
+                dp[i][j] = false;
+            }
+        }
+    }
+
+    dp[s_len][p_len]
 }
 
 fn expr_name(expr: &Expr) -> String {
