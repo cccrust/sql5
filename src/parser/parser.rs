@@ -256,14 +256,22 @@ impl Parser {
             cols
         } else { vec![] };
 
-        self.eat(&Token::Values)?;
-        let mut values = Vec::new();
-        loop {
-            self.eat(&Token::LParen)?;
-            values.push(self.parse_expr_list()?);
-            self.eat(&Token::RParen)?;
-            if !self.maybe(&Token::Comma) { break; }
-        }
+        // INSERT DEFAULT VALUES
+        let (values, default_values) = if self.check(&Token::Default) {
+            self.advance();
+            self.eat(&Token::Values)?;
+            (vec![vec![]], true)
+        } else {
+            self.eat(&Token::Values)?;
+            let mut vals = Vec::new();
+            loop {
+                self.eat(&Token::LParen)?;
+                vals.push(self.parse_expr_list()?);
+                self.eat(&Token::RParen)?;
+                if !self.maybe(&Token::Comma) { break; }
+            }
+            (vals, false)
+        };
 
         let on_conflict = if self.maybe(&Token::On) {
             self.eat(&Token::Conflict)?;
@@ -281,7 +289,7 @@ impl Parser {
             }
         } else { None };
 
-        Ok(InsertStmt { table, columns, values, on_conflict })
+        Ok(InsertStmt { table, columns, values, default_values, on_conflict })
     }
 
     fn is_values_next(&self) -> bool {
@@ -423,6 +431,21 @@ impl Parser {
                         None
                     };
                     cons.push(ColumnConstraint::References { table, column });
+                }
+                Token::Default => {
+                    self.advance();
+                    let default_expr = if self.check(&Token::LParen) {
+                        self.eat(&Token::LParen)?;
+                        let expr = self.parse_expr()?;
+                        self.eat(&Token::RParen)?;
+                        expr
+                    } else if self.check(&Token::LitNull) {
+                        self.advance();
+                        Expr::LitNull
+                    } else {
+                        self.parse_primary()?
+                    };
+                    cons.push(ColumnConstraint::Default(default_expr));
                 }
                 _ => break,
             }

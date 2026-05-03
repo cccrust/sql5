@@ -221,6 +221,7 @@ impl<'a, S: Storage> Planner<'a, S> {
             table:   s.table,
             columns: s.columns,
             source:  InsertSource::Values(s.values),
+            default_values: s.default_values,
         })
     }
 

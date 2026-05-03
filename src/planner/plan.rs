@@ -74,6 +74,7 @@ pub enum Plan {
         table:   String,
         columns: Vec<String>,
         source:  InsertSource,
+        default_values: bool,
     },
 
     /// UPDATE

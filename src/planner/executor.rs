@@ -121,7 +121,7 @@ impl Executor {
                 self.exec_aggregate(*input, group_by, having, outputs),
             Plan::Join      { left, right, condition, kind } =>
                 self.exec_join(*left, *right, condition, kind),
-            Plan::Insert    { table, columns, source }       => self.exec_insert(table, columns, source),
+            Plan::Insert    { table, columns, source, default_values }       => self.exec_insert(table, columns, source, default_values),
             Plan::Update    { table, input, sets }           => self.exec_update(table, *input, sets),
             Plan::Delete    { table, input }                 => self.exec_delete(table, *input),
             Plan::CreateTable { stmt }                       => self.exec_create_table(stmt),
@@ -366,21 +366,33 @@ impl Executor {
 
     // ── DML ───────────────────────────────────────────────────────────────
 
-    fn exec_insert(&mut self, table: String, columns: Vec<String>, source: InsertSource) -> Result<ResultSet, String> {
+    fn exec_insert(&mut self, table: String, columns: Vec<String>, source: InsertSource, default_values: bool) -> Result<ResultSet, String> {
         let mut meta = self.catalog.get_table(&table)
             .ok_or_else(|| format!("table '{}' not found", table))?.clone();
 
         let InsertSource::Values(all_values) = source;
-        let count = all_values.len();
+        let count = if default_values { 1 } else { all_values.len() };
 
         // 檢查是否有 AUTOINCREMENT 欄位
         let autoinc_col_idx = meta.schema.columns.iter()
             .position(|c| c.autoinc);
 
         for value_exprs in all_values {
-            let mut vals: Vec<Value> = value_exprs.iter()
-                .map(eval_literal)
-                .collect::<Result<_, String>>()?;
+            // INSERT DEFAULT VALUES - 使用 schema 中的預設值
+            let mut vals: Vec<Value> = if default_values {
+                meta.schema.columns.iter()
+                    .map(|col| {
+                        if let Some(ref expr) = col.default {
+                            return eval_literal(expr).unwrap_or(Value::Null);
+                        }
+                        Value::Null
+                    })
+                    .collect()
+            } else {
+                value_exprs.iter()
+                    .map(eval_literal)
+                    .collect::<Result<_, String>>()?
+            };
 
             // 處理 AUTOINCREMENT - 只計算需要多少空間
             let mut autoinc_value: Option<i64> = None;
@@ -558,12 +570,21 @@ impl Executor {
                 SqlType::Null    => DataType::Text,
             };
             let mut col = Column::new(&cd.name, dt);
-            // 檢查是否有 PRIMARY KEY AUTOINCREMENT
+            // 檢查約束
             for constraint in &cd.constraints {
-                if let ColumnConstraint::PrimaryKey { autoincrement } = constraint {
-                    if *autoincrement {
-                        col = col.autoincrement();
+                match constraint {
+                    ColumnConstraint::PrimaryKey { autoincrement } => {
+                        if *autoincrement {
+                            col = col.autoincrement();
+                        }
                     }
+                    ColumnConstraint::Default(expr) => {
+                        col = col.with_default(expr.clone());
+                    }
+                    ColumnConstraint::NotNull => {
+                        col = col.not_null();
+                    }
+                    _ => {}
                 }
             }
             col

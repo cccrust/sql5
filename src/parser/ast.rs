@@ -101,6 +101,7 @@ pub struct InsertStmt {
     pub table:   String,
     pub columns: Vec<String>,   // 空表示不指定欄位
     pub values:  Vec<Vec<Expr>>,
+    pub default_values: bool,  // true for INSERT DEFAULT VALUES
     pub on_conflict: Option<OnConflict>,
 }
 

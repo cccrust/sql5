@@ -27,11 +27,12 @@ pub struct Column {
     pub data_type:   DataType,
     pub nullable:    bool,
     pub autoinc:     bool,
+    pub default:     Option<crate::parser::ast::Expr>,
 }
 
 impl Column {
     pub fn new(name: &str, data_type: DataType) -> Self {
-        Column { name: name.to_string(), data_type, nullable: true, autoinc: false }
+        Column { name: name.to_string(), data_type, nullable: true, autoinc: false, default: None }
     }
 
     pub fn not_null(mut self) -> Self {
@@ -41,6 +42,11 @@ impl Column {
 
     pub fn autoincrement(mut self) -> Self {
         self.autoinc = true;
+        self
+    }
+
+    pub fn with_default(mut self, expr: crate::parser::ast::Expr) -> Self {
+        self.default = Some(expr);
         self
     }
 }
