@@ -518,6 +518,34 @@ assert_contains ".tables shows table" "t" "$OUT"
 OUT=$(run_sql ".databases")
 assert_contains ".databases" "(memory)" "$OUT"
 
+# ── 18. WAL Transactions ──────────────────────────────────────────────
+section "WAL Transactions"
+
+OUT=$(run_sql \
+    "CREATE TABLE users (id INTEGER, name TEXT);" \
+    "BEGIN;" \
+    "INSERT INTO users VALUES (1, 'Alice');" \
+    "INSERT INTO users VALUES (2, 'Bob');" \
+    "SELECT COUNT(*) FROM users;")
+assert_contains "BEGIN shows uncommitted" "2" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE t (id INTEGER, val TEXT);" \
+    "INSERT INTO t VALUES (1, 'original');" \
+    "BEGIN;" \
+    "INSERT INTO t VALUES (2, 'new_row');" \
+    "ROLLBACK;" \
+    "SELECT COUNT(*) FROM t;")
+assert_contains "ROLLBACK INSERT reverts" "1" "$OUT"
+
+OUT=$(run_sql \
+    "CREATE TABLE items (id INTEGER, name TEXT);" \
+    "BEGIN;" \
+    "INSERT INTO items VALUES (1, 'item1');" \
+    "COMMIT;" \
+    "SELECT * FROM items;")
+assert_contains "COMMIT persists" "item1" "$OUT"
+
 # ── 結果摘要 ──────────────────────────────────────────────────────────────
 
 echo ""

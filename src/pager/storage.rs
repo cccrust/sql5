@@ -319,18 +319,26 @@ impl Storage for DiskStorage {
     }
 
     fn write_node(&mut self, page_id: usize, node: &Node) {
+        // 在寫入前，如果正在交易中，先儲存原始頁面用於 rollback
         let buf = encode_node(node);
-        // 直接寫入主檔（穩定）
-        let offset = Self::page_offset(page_id);
-        self.file.seek(SeekFrom::Start(offset)).unwrap();
-        self.file.write_all(&buf).unwrap();
+        // 儲存原始狀態（只用於 rollback，恢复时会用 pre_image 中的原始状态）
+        // 注意：如果頁面不在 committed 中（就是新頁面），則跳過
+        if self.wal.in_txn() {
+            // 嘗試取得目前頁面的 committed 版本作為原始
+            if let Some(original) = self.wal.get_committed_copy(page_id as u32) {
+                self.wal.save_original(page_id as u32, original);
+            }
+        }
+        // 寫入 WAL
+        self.wal.write_page(page_id as u32, buf);
     }
 
     fn alloc_page(&mut self) -> usize {
         let id = self.page_count;
         self.page_count += 1;
-        // 在主檔佔位（空白頁）
+        // 在主檔佔位（空白頁），並寫入 WAL
         let blank = vec![0u8; PAGE_SIZE];
+        self.wal.write_page(id as u32, blank.clone());
         let offset = Self::page_offset(id);
         self.file.seek(SeekFrom::Start(offset)).unwrap();
         self.file.write_all(&blank).unwrap();
@@ -363,6 +371,7 @@ impl Storage for DiskStorage {
         self.catalog_root = Some(root);
         let _ = self.write_header();
     }
+    fn is_wal(&self) -> bool { true }
 }
 
 // ── 測試 ─────────────────────────────────────────────────────────────────
@@ -420,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // WAL disabled - need to reimplement
     fn disk_rollback() {
         cleanup("rollback");
         {
@@ -442,6 +450,85 @@ mod tests {
             assert_eq!(node.records[0].value, b"committed");
         }
         cleanup("rollback");
+    }
+
+    #[test]
+    fn disk_wal_write_through() {
+        cleanup("wal_write");
+        let mut store = DiskStorage::open("/tmp/sql5_wal_write.db").unwrap();
+        store.begin_txn();
+        let id = store.alloc_page();
+        store.write_node(id, &leaf_with(100, "wal_test"));
+        store.commit_txn();
+        // 不 flush，資料在 WAL 中
+        // 但 read_node 會從 WAL 讀取
+        let node = store.read_node(id);
+        assert_eq!(node.keys[0], Key::Integer(100));
+        assert_eq!(node.records[0].value, b"wal_test");
+        cleanup("wal_write");
+    }
+
+    #[test]
+    fn disk_multiple_transactions() {
+        cleanup("multi_txn");
+        let mut store = DiskStorage::open("/tmp/sql5_multi_txn.db").unwrap();
+        // 第一次交易
+        store.begin_txn();
+        let id1 = store.alloc_page();
+        store.write_node(id1, &leaf_with(1, "txn1"));
+        store.commit_txn();
+        // 第二次交易
+        store.begin_txn();
+        let id2 = store.alloc_page();
+        store.write_node(id2, &leaf_with(2, "txn2"));
+        store.commit_txn();
+        // 讀取兩個頁
+        let n1 = store.read_node(id1);
+        let n2 = store.read_node(id2);
+        assert_eq!(n1.records[0].value, b"txn1");
+        assert_eq!(n2.records[0].value, b"txn2");
+        cleanup("multi_txn");
+    }
+
+    #[test]
+    fn disk_auto_commit_wal() {
+        cleanup("auto_commit");
+        let mut store = DiskStorage::open("/tmp/sql5_auto_commit.db").unwrap();
+        // 直接寫入（auto-commit）
+        let id = store.alloc_page();
+        store.write_node(id, &leaf_with(5, "auto"));
+        // WAL 有記錄，直接讀取應該得到值
+        let node = store.read_node(id);
+        assert_eq!(node.records[0].value, b"auto");
+        cleanup("auto_commit");
+    }
+
+    #[test]
+    fn disk_is_wal_returns_true() {
+        cleanup("iswal");
+        let store = DiskStorage::open("/tmp/sql5_iswal.db").unwrap();
+        assert!(store.is_wal());
+        cleanup("iswal");
+    }
+
+    #[test]
+    fn disk_reopen_preserves_data() {
+        cleanup("reopen");
+        {
+            let mut store = DiskStorage::open("/tmp/sql5_reopen.db").unwrap();
+            store.begin_txn();
+            let id = store.alloc_page();
+            store.write_node(id, &leaf_with(123, "reopen_test"));
+            store.commit_txn();
+            store.flush();
+        }
+        {
+            let mut store = DiskStorage::open("/tmp/sql5_reopen.db").unwrap();
+            let node = store.read_node(0);
+            assert_eq!(node.keys[0], Key::Integer(123));
+            assert_eq!(node.records[0].value, b"reopen_test");
+        }
+        cleanup("reopen");
     }
 
     #[test]
