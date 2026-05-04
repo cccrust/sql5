@@ -40,11 +40,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release
-        env:
-          EXT: ${{ matrix.ext }}
-        run: |
-          cargo build --release
-          if ($env:EXT -eq ".exe") { Move-Item target\release\sql5 target\release\sql5.exe }
+        run: cargo build --release
 
       - name: Upload asset
         uses: softprops/action-gh-release@v2
