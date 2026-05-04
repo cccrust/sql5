@@ -235,6 +235,11 @@ impl<S: Storage> Catalog<S> {
         self.trigger_cache.keys().map(|s| s.as_str()).collect()
     }
 
+    /// 取得 Trigger
+    pub fn get_trigger(&self, name: &str) -> Option<&TriggerMeta> {
+        self.trigger_cache.get(name)
+    }
+
     /// 取得指定資料表的觸發器（依事件類型過濾）
     pub fn get_triggers(&self, table: &str, event: &TriggerEvent) -> Vec<&TriggerMeta> {
         self.trigger_cache

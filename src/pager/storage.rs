@@ -211,6 +211,7 @@ impl<S: Storage> Storage for LruCacheStorage<S> {
 /// ```
 pub struct DiskStorage {
     file:          File,
+    path:          std::path::PathBuf,
     page_count:    usize,
     /// catalog 根頁號（持久化於 header）
     pub catalog_root: Option<usize>,
@@ -224,6 +225,7 @@ const HEADER_OFFSET: u64 = PAGE_SIZE as u64;
 impl DiskStorage {
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let path = path.as_ref();
+        let path_buf = path.to_path_buf();
         let exists = path.exists();
 
         let file = OpenOptions::new()
@@ -234,6 +236,7 @@ impl DiskStorage {
 
         let mut storage = DiskStorage {
             file,
+            path: path_buf,
             page_count: 0,
             catalog_root: None,
             wal,
@@ -243,6 +246,19 @@ impl DiskStorage {
         else       { storage.write_header()?; }
 
         Ok(storage)
+    }
+
+    /// 回傳資料庫檔案路徑
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// 關閉檔案（用於 vacuum 時）
+    pub fn close(self) -> std::io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let fd = self.file.metadata()?.ino();
+        drop(self);
+        Ok(())
     }
 
     /// 將 catalog 根頁號寫入 header
@@ -698,30 +714,38 @@ impl Storage for DynStorage {
 #[derive(Clone)]
 pub struct SharedStorage {
     inner: Arc<Mutex<Box<dyn Storage>>>,
+    path: Option<std::path::PathBuf>,
 }
 
 impl SharedStorage {
     pub fn new(inner: Box<dyn Storage>) -> Self {
-        SharedStorage { inner: Arc::new(Mutex::new(inner)) }
+        SharedStorage { inner: Arc::new(Mutex::new(inner)), path: None }
     }
 
     pub fn memory() -> Self {
-        SharedStorage { inner: Arc::new(Mutex::new(Box::new(MemoryStorage::new()))) }
+        SharedStorage { inner: Arc::new(Mutex::new(Box::new(MemoryStorage::new()))), path: None }
     }
 
     pub fn disk<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(DiskStorage::open(path)?))) })
+        let path_buf = path.as_ref().to_path_buf();
+        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(DiskStorage::open(path)?))), path: Some(path_buf) })
     }
 
     /// 開啟磁碟資料庫並啟用 LRU 快取
     pub fn disk_with_cache<P: AsRef<Path>>(path: P, capacity: usize) -> std::io::Result<Self> {
+        let path_buf = path.as_ref().to_path_buf();
         let disk = DiskStorage::open(path)?;
         let cached = LruCacheStorage::new(disk, capacity);
-        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(cached))) })
+        Ok(SharedStorage { inner: Arc::new(Mutex::new(Box::new(cached))), path: Some(path_buf) })
     }
 
     pub fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Storage>> {
         self.inner.lock().expect("Storage lock poisoned")
+    }
+
+    /// 回傳磁碟路徑（如果是磁碟模式）
+    pub fn disk_path(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
     }
 
     /// 回傳 catalog 根頁號（如果有）

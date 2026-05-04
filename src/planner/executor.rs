@@ -833,6 +833,15 @@ impl Executor {
     }
 
     fn exec_vacuum(&mut self) -> Result<ResultSet, String> {
+        let disk_path = self.storage.disk_path().map(|p| p.to_path_buf());
+        if let Some(path) = disk_path {
+            self.exec_vacuum_disk(&path)
+        } else {
+            self.exec_vacuum_memory()
+        }
+    }
+
+    fn exec_vacuum_memory(&mut self) -> Result<ResultSet, String> {
         let new_storage = SharedStorage::memory();
         let mut new_catalog = Catalog::new(new_storage.clone());
 
@@ -887,6 +896,87 @@ impl Executor {
             let _ = self.get_table(&name);
         }
 
+        Ok(ResultSet::ok_msg("vacuum executed"))
+    }
+
+    fn exec_vacuum_disk(&mut self, path: &std::path::Path) -> Result<ResultSet, String> {
+        use std::fs;
+
+        let temp_path = path.with_extension("vacuum.tmp");
+
+        let new_storage = SharedStorage::disk(&temp_path)
+            .map_err(|e| format!("cannot create vacuum file: {}", e))?;
+        let mut new_catalog = Catalog::new(new_storage.clone());
+
+        for table_name in self.catalog.table_names() {
+            let meta = match self.catalog.get_table(table_name) {
+                Some(m) => m.clone(),
+                None => continue,
+            };
+
+            let _ = new_catalog.create_table(table_name, meta.schema.clone());
+
+            let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
+                Table::open(table_name, meta.schema.clone(), self.storage.clone(), meta.root_page, meta.row_count)
+            } else {
+                Table::new(table_name, meta.schema.clone(), self.storage.clone())
+            };
+
+            let rows = {
+                let mut t = tbl;
+                let old_rows = t.scan();
+                drop(t);
+                old_rows
+            };
+
+            let mut new_tbl = Table::new(table_name, meta.schema.clone(), new_storage.clone());
+            for row in rows {
+                new_tbl.insert(row)?;
+            }
+            let root = new_tbl.root_page();
+            let count = new_tbl.len();
+            new_catalog.update_table_meta(table_name, root, count)?;
+        }
+
+        for index_name in self.catalog.index_names() {
+            if let Some(meta) = self.catalog.get_index(index_name) {
+                let _ = new_catalog.create_index(index_name, &meta.table, &meta.columns, meta.unique);
+            }
+        }
+
+        for view_name in self.catalog.view_names() {
+            if let Some(view_meta) = self.catalog.get_view(view_name) {
+                let _ = new_catalog.create_view(view_name, &view_meta.query);
+            }
+        }
+
+        for trigger_name in self.catalog.trigger_names() {
+            if let Some(trigger_meta) = self.catalog.get_trigger(trigger_name) {
+                let _ = new_catalog.create_trigger(
+                    &trigger_meta.name,
+                    &trigger_meta.table,
+                    trigger_meta.timing.clone(),
+                    trigger_meta.event.clone(),
+                    trigger_meta.for_each_row,
+                    trigger_meta.when.clone(),
+                    &trigger_meta.body,
+                );
+            }
+        }
+
+        new_storage.lock().flush();
+        drop(new_storage);
+        drop(new_catalog);
+
+        fs::rename(&temp_path, path)
+            .map_err(|e| format!("vacuum rename failed: {}", e))?;
+
+        let _ = fs::remove_file(temp_path.with_extension("sql5wal"));
+
+        let new_exec = Executor::with_disk(path.as_os_str().to_str().unwrap())
+            .map_err(|e| format!("cannot reopen database after vacuum: {}", e))?;
+
+        *self = new_exec;
         Ok(ResultSet::ok_msg("vacuum executed"))
     }
 
