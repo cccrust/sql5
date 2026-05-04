@@ -61,29 +61,3 @@ jobs:
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
-    needs: [build, upload]
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install build twine
-
-      - name: Build package
-        run: python -m build
-        working-directory: sql5_pypi
-
-      - name: Publish to PyPI
-        env:
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: twine upload sql5_pypi/dist/* --user __token__ --password $TWINE_PASSWORD
