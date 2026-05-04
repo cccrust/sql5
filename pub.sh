@@ -2,9 +2,9 @@
 # pub.sh — sql5 發布腳本
 #
 # 用法:
-#   ./pub.sh pypi     直接上傳到 PyPI（需要 PYPI_TOKEN）
-#   ./pub.sh github   建立 GitHub tag 並推送（觸發 GitHub Actions 上傳到 PyPI）
-#   ./pub.sh          顯示幫助並警告
+#   ./pub.sh <version> pypi     上傳到 PyPI（會更新版本號）
+#   ./pub.sh <version> github   建立 GitHub tag（會更新版本號並觸發 CI）
+#   ./pub.sh                    顯示幫助
 
 set -euo pipefail
 
@@ -16,49 +16,60 @@ RESET='\033[0m'
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
-function usage() {
-    echo "=============================================="
-    echo "sql5 發布工具"
-    echo "=============================================="
-    echo ""
-    echo "用法:"
-    echo "  ./pub.sh pypi     直接上傳到 PyPI（會使用 .pypirc 或 PYPI_TOKEN）"
-    echo "  ./pub.sh github   建立 GitHub tag 並推送（觸發 GitHub Actions 上傳到 PyPI）"
-    echo ""
-    echo "發布前請確認:"
-    echo "  1. 版本已更新 (Cargo.toml, pyproject.toml, __init__.py)"
-    echo "  2. 所有測試通過 (cargo test && ./rutest.sh && ./pytest.sh)"
-    echo "  3. _doc/vX.X.md 版本文件已更新"
-    echo ""
-    echo "當前版本:"
-    grep '^version = ' Cargo.toml || echo "  (無法讀取)"
-    echo ""
+function version_compare() {
+    local v1=$1
+    local v2=$2
+
+    local v1_major=$(echo $v1 | cut -d. -f1)
+    local v1_minor=$(echo $v1 | cut -d. -f2)
+    local v1_patch=$(echo $v1 | cut -d. -f3)
+    v1_patch=${v1_patch:-0}
+
+    local v2_major=$(echo $v2 | cut -d. -f1)
+    local v2_minor=$(echo $v2 | cut -d. -f2)
+    local v2_patch=$(echo $v2 | cut -d. -f3)
+    v2_patch=${v2_patch:-0}
+
+    if [ "$v1_major" -gt "$v2_major" ]; then return 0; fi
+    if [ "$v1_major" -lt "$v2_major" ]; then return 1; fi
+    if [ "$v1_minor" -gt "$v2_minor" ]; then return 0; fi
+    if [ "$v1_minor" -lt "$v2_minor" ]; then return 1; fi
+    if [ "$v1_patch" -gt "$v2_patch" ]; then return 0; fi
+    return 1
 }
 
-function warn_no_arg() {
-    echo -e "${YELLOW}警告: 未指定發布目標${RESET}"
-    echo ""
-    echo "請選擇發布方式:"
-    echo ""
-    echo "  pypi     - 直接上傳到 PyPI（需要已 build 的 dist/）"
-    echo "            會先 build Python package: cd sql5_pypi && python -m build"
-    echo ""
-    echo "  github   - 建立 GitHub tag 並推送"
-    echo "            會觸發 GitHub Actions: build + 上傳 release + 上傳 PyPI"
-    echo ""
-    echo "重要: 發布前請確認版本已更新！"
-    echo ""
-    read -p "繼續發布? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "已取消"
-        exit 1
-    fi
+function get_current_version() {
+    grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/'
+}
+
+function update_version() {
+    local NEW_VERSION=$1
+
+    echo "更新版本號為 $NEW_VERSION..."
+
+    # Update Cargo.toml
+    sed -i.bak "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+    rm -f Cargo.toml.bak
+
+    # Update pyproject.toml
+    sed -i.bak "s/^version = \".*\"/version = \"$NEW_VERSION\"/" sql5_pypi/pyproject.toml
+    rm -f sql5_pypi/pyproject.toml.bak
+
+    # Update __init__.py
+    sed -i.bak "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" sql5_pypi/sql5/__init__.py
+    rm -f sql5_pypi/sql5/__init__.py.bak
+
+    echo -e "${GREEN}版本已更新${RESET}"
 }
 
 function do_pypi() {
-    echo -e "${GREEN}=== 直接上傳到 PyPI ===${RESET}"
+    local VERSION=$1
+
+    echo -e "${GREEN}=== 上傳到 PyPI (v$VERSION) ===${RESET}"
     echo ""
+
+    # Update version
+    update_version "$VERSION"
 
     cd "$PROJECT_DIR/sql5_pypi"
 
@@ -76,51 +87,41 @@ function do_pypi() {
     fi
 
     echo ""
-    echo -e "${GREEN}完成！已上傳到 PyPI${RESET}"
+    echo -e "${GREEN}完成！已上傳 sql5-$VERSION 到 PyPI${RESET}"
+    echo "安裝: pip install sql5==$VERSION"
+
+    cd "$PROJECT_DIR"
 }
 
 function do_github() {
-    echo -e "${GREEN}=== 建立 GitHub Release ===${RESET}"
+    local VERSION=$1
+    local TAG="v$VERSION"
+
+    echo -e "${GREEN}=== 建立 GitHub Release (v$VERSION) ===${RESET}"
     echo ""
 
-    # Check for uncommitted changes
-    if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git status --porcelain)" ]; then
-        echo -e "${YELLOW}警告: Working tree 有未提交的更改${RESET}"
-        git status --short
-        echo ""
-        read -p "繼續? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
+    # Update version first
+    update_version "$VERSION"
+
+    # Auto-stage all tracked files (respects .gitignore)
+    echo "Staging files..."
+    git add -A
+
+    # Check if there are changes to commit
+    if git diff --cached --quiet; then
+        echo -e "${YELLOW}沒有需要提交的更改${RESET}"
+    else
+        echo "有文件已更新"
     fi
 
-    # Get current version from Cargo.toml
-    CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-
-    if [[ -z "$CURRENT_VERSION" ]]; then
-        echo -e "${RED}錯誤: 無法讀取版本${RESET}"
-        exit 1
-    fi
-
-    echo "當前版本: $CURRENT_VERSION"
-    TAG="v$CURRENT_VERSION"
-
-    # Check if tag already exists
-    if git rev-parse "$TAG" >/dev/null 2>&1; then
-        echo -e "${RED}錯誤: Tag $TAG 已存在${RESET}"
-        echo "請先刪除: git tag -d $TAG"
-        exit 1
-    fi
-
-    echo ""
     echo "將會:"
     echo "  1. 建立 tag: $TAG"
     echo "  2. 推送到 GitHub"
-    echo "  3. GitHub Actions 會:"
-    echo "     - Build 4 平台 (macOS arm64/x86_64, Linux, Windows)"
-    echo "     - 上传到 GitHub Release"
-    echo "     - 上傳到 PyPI"
+    echo "  3. GitHub Actions 會 build 4 平台 (macOS arm64/x86_64, Linux, Windows)"
+    echo "     並上傳到 GitHub Release"
+    echo ""
+    echo "注意: GitHub Actions 不會自動上傳到 PyPI"
+    echo "      如需上傳 PyPI，請另外執行: ./pub.sh $VERSION pypi"
     echo ""
 
     read -p "確認發布? (y/N) " -n 1 -r
@@ -130,44 +131,108 @@ function do_github() {
         exit 1
     fi
 
+    # Stage and commit version changes
+    echo "提交版本更新..."
+    git add Cargo.toml sql5_pypi/pyproject.toml sql5_pypi/sql5/__init__.py
+    git commit -m "Bump version to $VERSION"
+
     # Create and push tag
     echo "建立 tag..."
     git tag "$TAG"
 
     echo "推送到 GitHub..."
-    git push origin "$TAG"
+    git push origin main "$TAG"
 
     echo ""
     echo -e "${GREEN}完成！已推送到 GitHub${RESET}"
     echo ""
-    echo "GitHub Actions 將在約 2 分鐘後完成"
+    echo "GitHub Actions 將在約 2-3 分鐘後完成"
     echo "查看: https://github.com/cccrust/sql5/actions"
     echo ""
-    echo "安裝: pip install sql5"
+    echo "完成後可上傳 PyPI: ./pub.sh $VERSION pypi"
+}
+
+function usage() {
+    echo "=============================================="
+    echo "sql5 發布工具"
+    echo "=============================================="
+    echo ""
+    echo "用法:"
+    echo "  ./pub.sh <version> pypi     上傳到 PyPI"
+    echo "  ./pub.sh <version> github   建立 GitHub tag（觸發 CI 自動發布）"
+    echo "  ./pub.sh <version> all      同時上傳到 PyPI + GitHub"
+    echo ""
+    echo "範例:"
+    echo "  ./pub.sh 2.0.1 pypi"
+    echo "  ./pub.sh 2.0.1 github"
+    echo "  ./pub.sh 2.0.1 all"
+    echo ""
+    echo "當前版本: $(get_current_version)"
+    echo ""
+    echo "發布前請確認:"
+    echo "  1. 所有測試通過 (cargo test && ./rutest.sh && ./pytest.sh)"
+    echo "  2. _doc/vX.X.md 版本文件已更新"
 }
 
 # Main
 if [[ $# -eq 0 ]]; then
     usage
-    warn_no_arg
+    exit 0
+fi
+
+if [[ $# -lt 1 ]]; then
+    echo -e "${RED}錯誤: 缺少版本號${RESET}"
     echo ""
-    echo "請使用: ./pub.sh pypi 或 ./pub.sh github"
+    usage
     exit 1
 fi
 
-case "$1" in
+NEW_VERSION="$1"
+TARGET="${2:-all}"
+
+# Validate version format
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+    echo -e "${RED}錯誤: 版本格式錯誤: $NEW_VERSION${RESET}"
+    echo "正確格式: 1.22 或 1.22.3"
+    exit 1
+fi
+
+# Get current version and compare
+CURRENT_VERSION=$(get_current_version)
+echo "當前版本: $CURRENT_VERSION"
+echo "新版本: $NEW_VERSION"
+
+if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
+    echo -e "${YELLOW}版本相同，略過更新${RESET}"
+elif ! version_compare "$NEW_VERSION" "$CURRENT_VERSION"; then
+    echo -e "${RED}錯誤: 新版本不能低於當前版本 ($CURRENT_VERSION)${RESET}"
+    exit 1
+fi
+
+# Execute
+case "$TARGET" in
     pypi)
-        do_pypi
+        do_pypi "$NEW_VERSION"
         ;;
     github)
-        do_github
+        do_github "$NEW_VERSION"
         ;;
-    -h|--help|help)
-        usage
+    all)
+        echo -e "${GREEN}=== 執行完整發布 ===${RESET}"
+        echo ""
+        echo "Step 1: 上傳到 PyPI..."
+        do_pypi "$NEW_VERSION"
+        echo ""
+        echo "Step 2: 建立 GitHub Release (觸發 CI build)..."
+        do_github "$NEW_VERSION"
+        echo ""
+        echo -e "${GREEN}完成！${RESET}"
+        echo "- PyPI: 可立即 pip install sql5==$NEW_VERSION"
+        echo "- GitHub: CI 正在 build binary，完成後會自動可下載"
         ;;
     *)
-        echo -e "${RED}未知參數: $1${RESET}"
-        usage
+        echo -e "${RED}錯誤: 未知目標: $TARGET${RESET}"
+        echo "請使用 pypi、github 或 all"
         exit 1
         ;;
 esac

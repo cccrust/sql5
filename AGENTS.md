@@ -28,8 +28,8 @@ cargo build --release
 | `./test.sh` | **執行全部測試** (Rust + CLI + Python) |
 | `./rutest.sh` | CLI 整合測試 (113 tests) |
 | `./pytest.sh` | Python client 整合測試 |
-| `./pub.sh pypi` | 直接上傳到 PyPI (需 PYPI_TOKEN) |
-| `./pub.sh github` | 建立 GitHub tag 觸發 CI 發布 |
+| `./pub.sh <version> pypi` | 上傳到 PyPI（自動更新版本號） |
+| `./pub.sh <version> github` | 建立 GitHub tag 觸發 CI 發布（自動更新版本號） |
 
 ## 測試說明
 

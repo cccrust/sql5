@@ -172,32 +172,22 @@ cargo test
 ### Publish to PyPI
 
 ```bash
-# Install version, build and publish
-./publish.sh 1.22
+# Directly upload to PyPI (auto-updates version in all files)
+./pub.sh 2.0.1 pypi
 
-# Or manually:
-# 1. Update version in:
-#    - Cargo.toml
-#    - sql5_pypi/sql5/__init__.py
-#    - sql5_pypi/pyproject.toml
-# 2. Tag and push
-git tag v1.22
-git push origin v1.22
+# Or push to GitHub (triggers CI to upload to PyPI)
+./pub.sh 2.0.1 github
 ```
 
 ## Version History
 
 | Version | Date | Features |
 |---------|------|----------|
+| v2.1.0 | 2026-05-04 | Client-server: Python client + Rust server |
+| v2.0.0 | 2026-05-04 | Client-server architecture |
+| v1.22 | 2026-05-04 | Various fixes |
 | v1.21 | 2026-05-04 | VACUUM (disk mode), Trigger persistence |
 | v1.20 | 2026-05-04 | Trigger CRUD, fire_triggers() |
-| v1.19 | 2026-05-04 | VACUUM (memory mode) |
-| v1.18 | 2026-05-04 | ATTACH/DETACH DATABASE |
-| v1.17 | 2026-05-04 | Trigger framework (parser/planner) |
-| v1.16 | 2026-05-04 | TRIGGERs planning |
-| v1.15 | 2026-05-04 | GLOB/LIKE fix, Table::scan() |
-| v1.14 | 2026-05-03 | LIMIT n,m, CROSS/NATURAL JOIN, GLOB |
-| v1.5-v1.13 | various | FTS5, WAL, Views, Indexes, etc. |
 
 See [`_doc/`](_doc/) for detailed version notes.
 

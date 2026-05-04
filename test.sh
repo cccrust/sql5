@@ -86,6 +86,24 @@ fi
 echo ""
 
 # ============================================
+# 5. Python client integration test (sql5test.py)
+# ============================================
+echo -e "${BLUE}[5/5] Running Python client test...${RESET}"
+echo ""
+cd "$PROJECT_DIR/sql5_pypi/examples"
+rm -f mydb.db
+python3 sql5test.py 2>&1
+PYCLIENT_STATUS=$?
+echo ""
+if [[ $PYCLIENT_STATUS -eq 0 ]]; then
+    echo -e "  ${GREEN}Python client test: PASSED${RESET}"
+else
+    echo -e "  ${RED}Python client test: FAILED${RESET}"
+fi
+rm -f mydb.db
+echo ""
+
+# ============================================
 # Summary
 # ============================================
 echo "=============================================="
@@ -110,6 +128,12 @@ else
     echo -e "  ${RED}[FAIL]${RESET} Python pytest tests"
 fi
 
+if [[ $PYCLIENT_STATUS -eq 0 ]]; then
+    echo -e "  ${GREEN}[PASS]${RESET} Python client test (sql5test.py)"
+else
+    echo -e "  ${RED}[FAIL]${RESET} Python client test (sql5test.py)"
+fi
+
 echo ""
 echo "=============================================="
 echo "測試完成!"
@@ -117,7 +141,7 @@ echo "=============================================="
 echo ""
 
 # Exit with failure if any test failed
-if [[ $CARGO_STATUS -ne 0 ]] || [[ $PYTEST_STATUS -ne 0 ]]; then
+if [[ $CARGO_STATUS -ne 0 ]] || [[ $PYTEST_STATUS -ne 0 ]] || [[ $PYCLIENT_STATUS -ne 0 ]]; then
     exit 1
 fi
 

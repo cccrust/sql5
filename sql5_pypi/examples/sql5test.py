@@ -1,7 +1,10 @@
 import sql5
 
-# Create in-memory database
+# In-memory database
 db = sql5.connect()
+
+# Or open a file
+db = sql5.connect("mydb.db")
 
 # Or open a file
 # db = sql5.connect("mydb.db")

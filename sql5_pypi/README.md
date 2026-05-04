@@ -1,6 +1,14 @@
 # sql5
 
-SQLite-compatible database with native CJK FTS5 support.
+SQLite-compatible database with native CJK FTS5 support. Built with Rust.
+
+## v2.0 - Client-Server Architecture
+
+sql5 v2.0 consists of:
+- **Python package** (`sql5` on PyPI): Pure Python client
+- **Rust binary**: Server process providing all SQL functionality
+
+The Python client communicates with the Rust server via JSON over stdin/stdout.
 
 ## Installation
 
@@ -13,8 +21,11 @@ pip install sql5
 ```python
 import sql5
 
-# Create in-memory database
+# In-memory database
 db = sql5.connect()
+
+# Or open a file
+db = sql5.connect("mydb.db")
 
 # Or open a file
 # db = sql5.connect("mydb.db")
@@ -108,6 +119,15 @@ echo "SELECT 1 + 1;" | sql5
 ## Requirements
 
 - Python 3.8+
+
+## Development
+
+To use a local Rust binary instead of downloading from GitHub:
+
+```bash
+export SQL5_BINARY=/path/to/local/sql5
+python -c "import sql5; print(sql5.__version__)"
+```
 
 ## License
 
