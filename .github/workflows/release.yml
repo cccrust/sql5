@@ -46,24 +46,37 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download sql5-macos-arm64
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: sql5-macos-arm64
+          path: upload
 
-      - name: List artifacts
-        run: ls -la artifacts/
+      - name: Download sql5-macos-x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: sql5-macos-x86_64
+          path: upload
+
+      - name: Download sql5-linux-x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: sql5-linux-x86_64
+          path: upload
+
+      - name: Download sql5-windows-x86_64.exe
+        uses: actions/download-artifact@v4
+        with:
+          name: sql5-windows-x86_64.exe
+          path: upload
+
+      - name: List files
+        run: ls -la upload/
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/sql5-macos-arm64
-            artifacts/sql5-macos-x86_64
-            artifacts/sql5-linux-x86_64
-            artifacts/sql5-windows-x86_64.exe
+          files: upload/*
           draft: false
-          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
