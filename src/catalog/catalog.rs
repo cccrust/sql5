@@ -27,7 +27,7 @@ use crate::btree::tree::BPlusTree;
 use crate::pager::storage::Storage;
 use crate::table::schema::Schema;
 
-use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta, TriggerMeta, TriggerTiming, TriggerEvent};
+use super::meta::{decode_meta, encode_meta, TableMeta, IndexMeta, ViewMeta, TriggerMeta, TriggerTiming, TriggerEvent, encode_trigger, decode_trigger};
 use crate::table::schema::Column;
 
 pub struct Catalog<S: Storage> {
@@ -210,10 +210,9 @@ impl<S: Storage> Catalog<S> {
         if self.trigger_cache.contains_key(name) {
             return Err(format!("trigger '{}' already exists", name));
         }
-        self.trigger_cache.insert(
-            name.to_string(),
-            TriggerMeta::new(name, table, timing, event, for_each_row, when, body),
-        );
+        let meta = TriggerMeta::new(name, table, timing, event, for_each_row, when, body);
+        self.persist_trigger(&meta);
+        self.trigger_cache.insert(name.to_string(), meta);
         Ok(())
     }
 
@@ -222,6 +221,7 @@ impl<S: Storage> Catalog<S> {
         if self.trigger_cache.remove(name).is_none() {
             return Err(format!("trigger '{}' not found", name));
         }
+        self.remove_trigger_meta(name);
         Ok(())
     }
 
@@ -298,14 +298,35 @@ impl<S: Storage> Catalog<S> {
         self.sys_tree.insert(key, bytes);
     }
 
+    fn persist_trigger(&mut self, trigger: &TriggerMeta) {
+        let key = Key::Text(format!("__trigger:{}", trigger.name));
+        let bytes = encode_trigger(trigger);
+        self.sys_tree.insert(key, bytes);
+    }
+
+    fn remove_trigger_meta(&mut self, name: &str) {
+        let key = Key::Text(format!("__trigger:{}", name));
+        self.sys_tree.delete(&key);
+    }
+
     /// 啟動時從系統表讀入所有 TableMeta 到快取
     fn load_all(&mut self) {
         let min = Key::Text(String::new());
         let max = Key::Text("\u{10FFFF}".repeat(4));
         let records = self.sys_tree.range_search(&min, &max);
         for record in records {
-            let meta = decode_meta(&record.value);
-            self.cache.insert(meta.name.clone(), meta);
+            let key_str = match &record.key {
+                Key::Text(s) => s.clone(),
+                Key::Integer(_) => continue,
+            };
+            if key_str.starts_with("__trigger:") {
+                let name = key_str.strip_prefix("__trigger:").unwrap();
+                let trigger = decode_trigger(&record.value);
+                self.trigger_cache.insert(name.to_string(), trigger);
+            } else {
+                let meta = decode_meta(&record.value);
+                self.cache.insert(meta.name.clone(), meta);
+            }
         }
     }
 
@@ -344,6 +365,16 @@ impl<S: Storage> Catalog<S> {
             ]);
         }
 
+        for trigger in self.trigger_cache.values() {
+            rows.push(vec![
+                Value::Text("trigger".to_string()),
+                Value::Text(trigger.name.clone()),
+                Value::Text(trigger.table.clone()),
+                Value::Integer(0),
+                Value::Text(self.trigger_create_sql(trigger)),
+            ]);
+        }
+
         rows.sort_by(|a, b| {
             let a_type = match &a[0] { Value::Text(s) => s.as_str(), _ => "" };
             let b_type = match &b[0] { Value::Text(s) => s.as_str(), _ => "" };
@@ -379,6 +410,31 @@ impl<S: Storage> Catalog<S> {
 
     fn view_create_sql(&self, view: &ViewMeta) -> String {
         format!("CREATE VIEW {} AS {}", view.name, view.query)
+    }
+
+    fn trigger_create_sql(&self, trigger: &TriggerMeta) -> String {
+        let timing = match trigger.timing {
+            TriggerTiming::Before => "BEFORE",
+            TriggerTiming::After => "AFTER",
+            TriggerTiming::InsteadOf => "INSTEAD OF",
+        };
+        let event = match &trigger.event {
+            TriggerEvent::Delete => "DELETE",
+            TriggerEvent::Insert => "INSERT",
+            TriggerEvent::Update(cols) => {
+                if let Some(c) = cols {
+                    return format!("CREATE TRIGGER {} {} UPDATE OF {} ON {} BEGIN {}; END",
+                        trigger.name, timing, c.join(","), trigger.table, trigger.body);
+                }
+                "UPDATE"
+            }
+        };
+        let when = match &trigger.when {
+            Some(w) => format!(" WHEN {}", w),
+            None => String::new(),
+        };
+        format!("CREATE TRIGGER {} {} {} ON {}{} BEGIN {}; END",
+            trigger.name, timing, event, trigger.table, when, trigger.body)
     }
 
     /// sqlite_master 的欄位名稱

@@ -192,6 +192,121 @@ fn tag_datatype(tag: u8) -> DataType {
 }
 
 // ------------------------------------------------------------------ //
+//  TriggerMeta 序列化                                                    //
+// ------------------------------------------------------------------ //
+
+pub fn encode_trigger(trigger: &TriggerMeta) -> Vec<u8> {
+    let mut buf = Vec::new();
+    encode_str(&mut buf, &trigger.name);
+    encode_str(&mut buf, &trigger.table);
+    buf.push(match trigger.timing {
+        TriggerTiming::Before => 0u8,
+        TriggerTiming::After => 1u8,
+        TriggerTiming::InsteadOf => 2u8,
+    });
+    match &trigger.event {
+        TriggerEvent::Delete => {
+            buf.push(0u8);
+        }
+        TriggerEvent::Insert => {
+            buf.push(1u8);
+        }
+        TriggerEvent::Update(cols) => {
+            buf.push(2u8);
+            match cols {
+                Some(c) => {
+                    buf.extend_from_slice(&(c.len() as u32).to_le_bytes());
+                    for col in c {
+                        encode_str(&mut buf, col);
+                    }
+                }
+                None => {
+                    buf.extend_from_slice(&u32::MAX.to_le_bytes());
+                }
+            }
+        }
+    }
+    buf.push(trigger.for_each_row as u8);
+    match &trigger.when {
+        Some(w) => {
+            buf.extend_from_slice(&(w.len() as u32).to_le_bytes());
+            buf.extend_from_slice(w.as_bytes());
+        }
+        None => {
+            buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        }
+    }
+    encode_str(&mut buf, &trigger.body);
+    buf
+}
+
+pub fn decode_trigger(bytes: &[u8]) -> TriggerMeta {
+    let mut cur = 0;
+
+    let (name, n) = decode_str(&bytes[cur..]);
+    cur += n;
+
+    let (table, n) = decode_str(&bytes[cur..]);
+    cur += n;
+
+    let timing = match bytes[cur] {
+        0 => TriggerTiming::Before,
+        1 => TriggerTiming::After,
+        _ => TriggerTiming::InsteadOf,
+    };
+    cur += 1;
+
+    let event = match bytes[cur] {
+        0 => TriggerEvent::Delete,
+        1 => TriggerEvent::Insert,
+        _ => {
+            cur += 1;
+            let cols_len = u32::from_le_bytes(bytes[cur..cur+4].try_into().unwrap()) as usize;
+            cur += 4;
+            let cols = if cols_len == u32::MAX as usize {
+                None
+            } else {
+                let mut cols_vec = Vec::with_capacity(cols_len);
+                for _ in 0..cols_len {
+                    let (col, n) = decode_str(&bytes[cur..]);
+                    cur += n;
+                    cols_vec.push(col);
+                }
+                Some(cols_vec)
+            };
+            TriggerEvent::Update(cols)
+        }
+    };
+    if matches!(event, TriggerEvent::Delete | TriggerEvent::Insert) {
+        cur += 1;
+    }
+
+    let for_each_row = bytes[cur] != 0;
+    cur += 1;
+
+    let when_len = u32::from_le_bytes(bytes[cur..cur+4].try_into().unwrap()) as usize;
+    cur += 4;
+    let when = if when_len == u32::MAX as usize {
+        None
+    } else {
+        Some(std::str::from_utf8(&bytes[cur..cur+when_len]).unwrap().to_string())
+    };
+    if when.is_some() { cur += when_len; }
+
+    let (body, _) = decode_str(&bytes[cur..]);
+
+    TriggerMeta {
+        name,
+        table,
+        timing,
+        event,
+        for_each_row,
+        when,
+        body,
+    }
+}
+
+// ------------------------------------------------------------------ //
 //  測試                                                                //
 // ------------------------------------------------------------------ //
 
