@@ -1,0 +1,1 @@
+echo '{"method":"execute","sql":"SELECT 1"}' | cargo run -- --server

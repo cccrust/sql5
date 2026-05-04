@@ -1,2 +1,4 @@
-__version__ = "1.22.16"
-__all__ = ["__version__"]
+__version__ = "2.0.0"
+__all__ = ["connect", "Connection", "Cursor", "Error"]
+
+from .client import connect, Connection, Cursor, Error

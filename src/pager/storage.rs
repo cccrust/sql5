@@ -242,8 +242,16 @@ impl DiskStorage {
             wal,
         };
 
-        if exists { storage.read_header()?; }
-        else       { storage.write_header()?; }
+        if exists {
+            let file_size = storage.file.metadata()?.len();
+            if file_size == 0 {
+                storage.write_header()?;
+            } else if let Err(e) = storage.read_header() {
+                return Err(e);
+            }
+        } else {
+            storage.write_header()?;
+        }
 
         Ok(storage)
     }

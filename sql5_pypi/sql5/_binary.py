@@ -5,7 +5,7 @@ import stat
 import urllib.request
 import hashlib
 
-VERSION = "1.21.0"
+VERSION = "2.0.0"
 OWNER = "cccrust"
 REPO = "sql5"
 
