@@ -1,6 +1,6 @@
 [package]
 name = "sql5"
-version = "1.22"
+version = "1.22.1"
 edition = "2024"
 
 [dependencies]
