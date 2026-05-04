@@ -357,3 +357,301 @@ pub enum UnaryOp {
     Neg,    // -
     Not,    // NOT
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expr_lit_int() {
+        let e = Expr::LitInt(42);
+        assert!(matches!(e, Expr::LitInt(42)));
+    }
+
+    #[test]
+    fn test_expr_lit_float() {
+        let e = Expr::LitFloat(3.14);
+        assert!(matches!(e, Expr::LitFloat(3.14)));
+    }
+
+    #[test]
+    fn test_expr_lit_str() {
+        let e = Expr::LitStr("hello".to_string());
+        assert!(matches!(e, Expr::LitStr(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_expr_lit_bool() {
+        let t = Expr::LitBool(true);
+        let f = Expr::LitBool(false);
+        assert!(matches!(t, Expr::LitBool(true)));
+        assert!(matches!(f, Expr::LitBool(false)));
+    }
+
+    #[test]
+    fn test_expr_lit_null() {
+        let e = Expr::LitNull;
+        assert!(matches!(e, Expr::LitNull));
+    }
+
+    #[test]
+    fn test_expr_column() {
+        let e = Expr::Column { table: None, name: "id".to_string() };
+        assert!(matches!(e, Expr::Column { table: None, name } if name == "id"));
+    }
+
+    #[test]
+    fn test_expr_column_with_table() {
+        let e = Expr::Column { table: Some("users".to_string()), name: "id".to_string() };
+        assert!(matches!(e, Expr::Column { table: Some(t), name } if t == "users" && name == "id"));
+    }
+
+    #[test]
+    fn test_expr_function() {
+        let e = Expr::Function { name: "COUNT".to_string(), args: vec![Expr::Column { table: None, name: "*".to_string() }], distinct: false };
+        assert!(matches!(e, Expr::Function { name, .. } if name == "COUNT"));
+    }
+
+    #[test]
+    fn test_expr_binop() {
+        use BinOp::*;
+        let e = Expr::BinOp {
+            left: Box::new(Expr::LitInt(1)),
+            op: Add,
+            right: Box::new(Expr::LitInt(2)),
+        };
+        assert!(matches!(e, Expr::BinOp { op: Add, .. }));
+    }
+
+    #[test]
+    fn test_expr_unary_op() {
+        let e = Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(Expr::LitInt(5)) };
+        assert!(matches!(e, Expr::UnaryOp { op: UnaryOp::Neg, .. }));
+    }
+
+    #[test]
+    fn test_expr_is_null() {
+        let e = Expr::IsNull { expr: Box::new(Expr::Column { table: None, name: "x".to_string() }), negated: false };
+        assert!(matches!(e, Expr::IsNull { negated: false, .. }));
+    }
+
+    #[test]
+    fn test_expr_is_not_null() {
+        let e = Expr::IsNull { expr: Box::new(Expr::Column { table: None, name: "x".to_string() }), negated: true };
+        assert!(matches!(e, Expr::IsNull { negated: true, .. }));
+    }
+
+    #[test]
+    fn test_binop_equality() {
+        let eq = BinOp::Eq;
+        let ne = BinOp::NotEq;
+        assert!(matches!(eq, BinOp::Eq));
+        assert!(matches!(ne, BinOp::NotEq));
+    }
+
+    #[test]
+    fn test_binop_comparison() {
+        assert!(matches!(BinOp::Lt, BinOp::Lt));
+        assert!(matches!(BinOp::LtEq, BinOp::LtEq));
+        assert!(matches!(BinOp::Gt, BinOp::Gt));
+        assert!(matches!(BinOp::GtEq, BinOp::GtEq));
+    }
+
+    #[test]
+    fn test_binop_logical() {
+        assert!(matches!(BinOp::And, BinOp::And));
+        assert!(matches!(BinOp::Or, BinOp::Or));
+    }
+
+    #[test]
+    fn test_binop_arithmetic() {
+        assert!(matches!(BinOp::Add, BinOp::Add));
+        assert!(matches!(BinOp::Sub, BinOp::Sub));
+        assert!(matches!(BinOp::Mul, BinOp::Mul));
+        assert!(matches!(BinOp::Div, BinOp::Div));
+        assert!(matches!(BinOp::Mod, BinOp::Mod));
+    }
+
+    #[test]
+    fn test_unary_op() {
+        assert!(matches!(UnaryOp::Neg, UnaryOp::Neg));
+        assert!(matches!(UnaryOp::Not, UnaryOp::Not));
+    }
+
+    #[test]
+    fn test_select_item_star() {
+        assert!(matches!(SelectItem::Star, SelectItem::Star));
+    }
+
+    #[test]
+    fn test_select_item_table_star() {
+        let si = SelectItem::TableStar("users".to_string());
+        match si {
+            SelectItem::TableStar(s) => assert_eq!(s, "users"),
+            _ => panic!("not TableStar"),
+        }
+    }
+
+    #[test]
+    fn test_select_item_expr() {
+        let si = SelectItem::Expr { expr: Expr::LitInt(1), alias: Some("one".to_string()) };
+        assert!(matches!(si, SelectItem::Expr { alias: Some(a), .. } if a == "one"));
+    }
+
+    #[test]
+    fn test_table_ref() {
+        let t = TableRef { name: "users".to_string(), alias: Some("u".to_string()) };
+        assert_eq!(t.name, "users");
+        assert_eq!(t.alias, Some("u".to_string()));
+    }
+
+    #[test]
+    fn test_from_item_table() {
+        let fi = FromItem::Table(TableRef { name: "users".to_string(), alias: None });
+        assert!(matches!(fi, FromItem::Table(t) if t.name == "users"));
+    }
+
+    #[test]
+    fn test_order_item() {
+        let oi = OrderItem { expr: Expr::LitInt(1), asc: true };
+        assert!(oi.asc);
+        assert!(matches!(oi.expr, Expr::LitInt(1)));
+    }
+
+    #[test]
+    fn test_join_kind() {
+        assert!(matches!(JoinKind::Inner, JoinKind::Inner));
+        assert!(matches!(JoinKind::Left, JoinKind::Left));
+        assert!(matches!(JoinKind::Right, JoinKind::Right));
+        assert!(matches!(JoinKind::Full, JoinKind::Full));
+        assert!(matches!(JoinKind::Cross, JoinKind::Cross));
+        assert!(matches!(JoinKind::Natural, JoinKind::Natural));
+    }
+
+    #[test]
+    fn test_join_condition() {
+        let on = JoinCondition::On(Expr::LitInt(1));
+        let using = JoinCondition::Using(vec!["id".to_string()]);
+        let none = JoinCondition::None;
+        assert!(matches!(on, JoinCondition::On(_)));
+        assert!(matches!(using, JoinCondition::Using(_)));
+        assert!(matches!(none, JoinCondition::None));
+    }
+
+    #[test]
+    fn test_insert_stmt() {
+        let stmt = InsertStmt {
+            table: "users".to_string(),
+            columns: vec!["name".to_string()],
+            values: vec![vec![Expr::LitStr("Alice".to_string())]],
+            default_values: false,
+            on_conflict: None,
+        };
+        assert_eq!(stmt.table, "users");
+        assert_eq!(stmt.columns.len(), 1);
+    }
+
+    #[test]
+    fn test_update_stmt() {
+        let stmt = UpdateStmt {
+            table: "users".to_string(),
+            sets: vec![("age".to_string(), Expr::LitInt(30))],
+            where_: None,
+        };
+        assert_eq!(stmt.table, "users");
+        assert_eq!(stmt.sets.len(), 1);
+    }
+
+    #[test]
+    fn test_delete_stmt() {
+        let stmt = DeleteStmt { table: "users".to_string(), where_: None };
+        assert_eq!(stmt.table, "users");
+    }
+
+    #[test]
+    fn test_create_table_stmt() {
+        let stmt = CreateTableStmt {
+            if_not_exists: true,
+            name: "users".to_string(),
+            columns: vec![],
+            constraints: vec![],
+        };
+        assert!(stmt.if_not_exists);
+        assert_eq!(stmt.name, "users");
+    }
+
+    #[test]
+    fn test_drop_table_stmt() {
+        let stmt = DropTableStmt { if_exists: true, name: "users".to_string() };
+        assert!(stmt.if_exists);
+        assert_eq!(stmt.name, "users");
+    }
+
+    #[test]
+    fn test_sql_type() {
+        assert!(matches!(SqlType::Integer, SqlType::Integer));
+        assert!(matches!(SqlType::Real, SqlType::Real));
+        assert!(matches!(SqlType::Text, SqlType::Text));
+        assert!(matches!(SqlType::Blob, SqlType::Blob));
+        assert!(matches!(SqlType::Boolean, SqlType::Boolean));
+        assert!(matches!(SqlType::Null, SqlType::Null));
+    }
+
+    #[test]
+    fn test_column_constraint() {
+        let not_null = ColumnConstraint::NotNull;
+        let pk = ColumnConstraint::PrimaryKey { autoincrement: false };
+        let unique = ColumnConstraint::Unique;
+        assert!(matches!(not_null, ColumnConstraint::NotNull));
+        assert!(matches!(pk, ColumnConstraint::PrimaryKey { autoincrement: false }));
+        assert!(matches!(unique, ColumnConstraint::Unique));
+    }
+
+    #[test]
+    fn test_trigger_timing() {
+        assert!(matches!(TriggerTiming::Before, TriggerTiming::Before));
+        assert!(matches!(TriggerTiming::After, TriggerTiming::After));
+        assert!(matches!(TriggerTiming::InsteadOf, TriggerTiming::InsteadOf));
+    }
+
+    #[test]
+    fn test_trigger_event() {
+        assert!(matches!(TriggerEvent::Delete, TriggerEvent::Delete));
+        assert!(matches!(TriggerEvent::Insert, TriggerEvent::Insert));
+        assert!(matches!(TriggerEvent::Update(None), TriggerEvent::Update(None)));
+        if let TriggerEvent::Update(Some(cols)) = TriggerEvent::Update(Some(vec!["id".to_string()])) {
+            assert_eq!(cols.len(), 1);
+        } else {
+            panic!("expected Update with Some");
+        }
+    }
+
+    #[test]
+    fn test_statement() {
+        let s = Statement::Begin;
+        assert!(matches!(s, Statement::Begin));
+
+        let s = Statement::Commit;
+        assert!(matches!(s, Statement::Commit));
+
+        let s = Statement::Rollback;
+        assert!(matches!(s, Statement::Rollback));
+
+        let s = Statement::Vacuum;
+        assert!(matches!(s, Statement::Vacuum));
+    }
+
+    #[test]
+    fn test_expr_clone() {
+        let e = Expr::LitInt(42);
+        let cloned = e.clone();
+        assert_eq!(e, cloned);
+    }
+
+    #[test]
+    fn test_statement_clone() {
+        let stmt = Statement::Begin;
+        let cloned = stmt.clone();
+        assert_eq!(stmt, cloned);
+    }
+}

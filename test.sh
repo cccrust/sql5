@@ -23,7 +23,7 @@ echo ""
 # ============================================
 # 1. Build Rust binary
 # ============================================
-echo -e "${BLUE}[1/4] Building Rust binary...${RESET}"
+echo -e "${BLUE}[1/5] Building Rust binary...${RESET}"
 if [[ ! -x "$BINARY" ]]; then
     echo "  Building release binary..."
     cd "$PROJECT_DIR" && cargo build --release
@@ -38,7 +38,7 @@ echo ""
 # ============================================
 # 2. Rust unit tests (cargo test)
 # ============================================
-echo -e "${BLUE}[2/4] Running Rust unit tests...${RESET}"
+echo -e "${BLUE}[2/5] Running Rust unit tests...${RESET}"
 echo ""
 cd "$PROJECT_DIR"
 cargo test 2>&1 | tail -30
@@ -54,7 +54,7 @@ echo ""
 # ============================================
 # 3. CLI integration tests (rutest.sh)
 # ============================================
-echo -e "${BLUE}[3/4] Running CLI integration tests...${RESET}"
+echo -e "${BLUE}[3/5] Running CLI integration tests...${RESET}"
 echo ""
 cd "$PROJECT_DIR"
 ./rutest.sh "$BINARY" 2>&1 | tail -30
@@ -70,7 +70,7 @@ echo ""
 # ============================================
 # 4. Python pytest tests
 # ============================================
-echo -e "${BLUE}[4/4] Running Python pytest tests...${RESET}"
+echo -e "${BLUE}[4/5] Running Python pytest tests...${RESET}"
 echo ""
 export SQL5_BINARY="$BINARY"
 export PYTHONPATH="${PROJECT_DIR/sql5_pypi}:${PYTHONPATH:-}"
@@ -96,11 +96,30 @@ python3 sql5test.py 2>&1
 PYCLIENT_STATUS=$?
 echo ""
 if [[ $PYCLIENT_STATUS -eq 0 ]]; then
-    echo -e "  ${GREEN}Python client test: PASSED${RESET}"
+    echo -e "  ${GREEN}Python client test (subprocess): PASSED${RESET}"
 else
-    echo -e "  ${RED}Python client test: FAILED${RESET}"
+    echo -e "  ${RED}Python client test (subprocess): FAILED${RESET}"
 fi
 rm -f mydb.db
+echo ""
+
+# ============================================
+# 6. WebSocket test (v3.0 new)
+# ============================================
+echo -e "${BLUE}[6/6] Running WebSocket test...${RESET}"
+echo ""
+cd "$PROJECT_DIR/sql5_pypi/examples"
+rm -f ws_test.db ws_test.db-wal ws_test.db-shm 2>/dev/null
+export SQL5_BINARY="$BINARY"
+python3 websocket_test.py 2>&1
+WEBSOCKET_STATUS=$?
+echo ""
+if [[ $WEBSOCKET_STATUS -eq 0 ]]; then
+    echo -e "  ${GREEN}WebSocket test: PASSED${RESET}"
+else
+    echo -e "  ${RED}WebSocket test: FAILED${RESET}"
+fi
+rm -f ws_test.db ws_test.db-wal ws_test.db-shm 2>/dev/null
 echo ""
 
 # ============================================
@@ -129,9 +148,15 @@ else
 fi
 
 if [[ $PYCLIENT_STATUS -eq 0 ]]; then
-    echo -e "  ${GREEN}[PASS]${RESET} Python client test (sql5test.py)"
+    echo -e "  ${GREEN}[PASS]${RESET} Python client test (subprocess)"
 else
-    echo -e "  ${RED}[FAIL]${RESET} Python client test (sql5test.py)"
+    echo -e "  ${RED}[FAIL]${RESET} Python client test (subprocess)"
+fi
+
+if [[ $WEBSOCKET_STATUS -eq 0 ]]; then
+    echo -e "  ${GREEN}[PASS]${RESET} WebSocket test (v3.0)"
+else
+    echo -e "  ${RED}[FAIL]${RESET} WebSocket test (v3.0)"
 fi
 
 echo ""
@@ -141,7 +166,7 @@ echo "=============================================="
 echo ""
 
 # Exit with failure if any test failed
-if [[ $CARGO_STATUS -ne 0 ]] || [[ $PYTEST_STATUS -ne 0 ]] || [[ $PYCLIENT_STATUS -ne 0 ]]; then
+if [[ $CARGO_STATUS -ne 0 ]] || [[ $PYTEST_STATUS -ne 0 ]] || [[ $PYCLIENT_STATUS -ne 0 ]] || [[ $WEBSOCKET_STATUS -ne 0 ]]; then
     exit 1
 fi
 

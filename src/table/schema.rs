@@ -71,3 +71,106 @@ impl Schema {
         self.columns.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_data_type_integer() {
+        let dt = DataType::Integer;
+        assert_eq!(dt.to_string(), "INTEGER");
+    }
+
+    #[test]
+    fn test_data_type_text() {
+        let dt = DataType::Text;
+        assert_eq!(dt.to_string(), "TEXT");
+    }
+
+    #[test]
+    fn test_data_type_boolean() {
+        let dt = DataType::Boolean;
+        assert_eq!(dt.to_string(), "BOOLEAN");
+    }
+
+    #[test]
+    fn test_data_type_float() {
+        let dt = DataType::Float;
+        assert_eq!(dt.to_string(), "FLOAT");
+    }
+
+    #[test]
+    fn test_column_new() {
+        let col = Column::new("id", DataType::Integer);
+        assert_eq!(col.name, "id");
+        assert_eq!(col.data_type, DataType::Integer);
+        assert!(col.nullable);
+        assert!(!col.autoinc);
+        assert!(col.default.is_none());
+    }
+
+    #[test]
+    fn test_column_not_null() {
+        let col = Column::new("id", DataType::Integer).not_null();
+        assert!(!col.nullable);
+    }
+
+    #[test]
+    fn test_column_autoincrement() {
+        let col = Column::new("id", DataType::Integer).autoincrement();
+        assert!(col.autoinc);
+    }
+
+    #[test]
+    fn test_column_with_default() {
+        let col = Column::new("id", DataType::Integer).not_null();
+        assert!(!col.nullable);
+        assert!(col.default.is_none());
+    }
+
+    #[test]
+    fn test_schema_new() {
+        let col1 = Column::new("id", DataType::Integer);
+        let col2 = Column::new("name", DataType::Text);
+        let schema = Schema::new(vec![col1, col2]);
+        assert_eq!(schema.len(), 2);
+    }
+
+    #[test]
+    fn test_schema_index_of() {
+        let col1 = Column::new("id", DataType::Integer);
+        let col2 = Column::new("name", DataType::Text);
+        let schema = Schema::new(vec![col1, col2]);
+
+        assert_eq!(schema.index_of("id"), Some(0));
+        assert_eq!(schema.index_of("name"), Some(1));
+        assert_eq!(schema.index_of("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_schema_len() {
+        let schema = Schema::new(vec![
+            Column::new("a", DataType::Integer),
+            Column::new("b", DataType::Text),
+            Column::new("c", DataType::Boolean),
+        ]);
+        assert_eq!(schema.len(), 3);
+    }
+
+    #[test]
+    fn test_schema_clone() {
+        let col = Column::new("id", DataType::Integer);
+        let schema = Schema::new(vec![col]);
+        let cloned = schema.clone();
+        assert_eq!(schema.len(), cloned.len());
+    }
+
+    #[test]
+    fn test_column_clone() {
+        let col = Column::new("name", DataType::Text);
+        let cloned = col.clone();
+        assert_eq!(col.name, cloned.name);
+        assert_eq!(col.data_type, cloned.data_type);
+    }
+}

@@ -360,3 +360,89 @@ fn split_sql_values(s: &str) -> Vec<String> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_table_name_from_insert() {
+        assert_eq!(extract_table_name_from_insert("INSERT INTO users VALUES (1, 'a')"), Some("users".to_string()));
+        assert_eq!(extract_table_name_from_insert("INSERT INTO my_table (id) VALUES (1)"), Some("my_table".to_string()));
+        assert_eq!(extract_table_name_from_insert("INSERT INTO users VALUES (1, 'a')"), Some("users".to_string()));
+    }
+
+    #[test]
+    fn test_extract_table_name_from_insert_case_insensitive() {
+        assert_eq!(extract_table_name_from_insert("insert into users values (1)"), Some("users".to_string()));
+    }
+
+    #[test]
+    fn test_extract_table_name_from_insert_not_found() {
+        assert_eq!(extract_table_name_from_insert("SELECT * FROM users"), None);
+    }
+
+    #[test]
+    fn test_extract_match_query() {
+        let result = extract_match_query("SELECT * FROM articles WHERE articles MATCH 'rust'");
+        assert!(result.is_some());
+        let (table, query) = result.unwrap();
+        assert_eq!(table, "articles");
+        assert_eq!(query, "rust");
+    }
+
+    #[test]
+    fn test_extract_match_query_with_quotes() {
+        let result = extract_match_query("SELECT * FROM articles WHERE articles MATCH '中文'");
+        assert!(result.is_some());
+        let (_, query) = result.unwrap();
+        assert_eq!(query, "中文");
+    }
+
+    #[test]
+    fn test_extract_match_query_not_found() {
+        assert_eq!(extract_match_query("SELECT * FROM users"), None);
+    }
+
+    #[test]
+    fn test_split_sql_values_simple() {
+        let result = split_sql_values("1, 2, 3");
+        assert_eq!(result, vec!["1", "2", "3"]);
+    }
+
+#[test]
+    fn test_split_sql_values_with_strings() {
+        let result = split_sql_values("'a', 'b', 'c'");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_split_sql_values_quoted_comma() {
+        let result = split_sql_values("'hello, world', 'foo'");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_split_sql_values_empty() {
+        let result = split_sql_values("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_split_sql_values_single_value() {
+        let result = split_sql_values("42");
+        assert_eq!(result, vec!["42"]);
+    }
+
+    #[test]
+    fn test_split_sql_values_with_spaces() {
+        let result = split_sql_values("  1  ,  2  ,  3  ");
+        assert_eq!(result, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn test_split_sql_values_double_quotes() {
+        let result = split_sql_values("\"a\", \"b\"");
+        assert_eq!(result.len(), 2);
+    }
+}
