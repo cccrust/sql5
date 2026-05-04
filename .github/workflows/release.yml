@@ -7,38 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-all:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            name: macos-x86_64
-          - target: aarch64-apple-darwin
-            name: macos-arm64
-          - target: x86_64-unknown-linux-gnu
-            name: linux-x86_64
+          - os: macos-latest
+            platform: macos-arm64
+            ext: ''
+          - os: macos-latest
+            platform: macos-x86_64
+            ext: ''
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            ext: ''
+          - os: windows-latest
+            platform: windows-x86_64
+            ext: '.exe'
 
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          rustup install stable
-          rustup target add ${{ matrix.target }}
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/sql5
-
-  build-windows:
-    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -48,32 +35,39 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-x86_64
-          path: target/release/sql5.exe
+          name: sql5-${{ matrix.platform }}
+          path: target/release/sql5${{ matrix.ext }}
 
   upload:
-    needs: [build-all, build-windows]
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download all
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List
-        run: ls -laR artifacts/
+      - name: Rename binaries
+        run: |
+          cd artifacts
+          mv sql5-macos-arm64 sql5-macos-arm64-bin
+          mv sql5-macos-x86_64 sql5-macos-x86_64-bin
+          mv sql5-linux-x86_64 sql5-linux-x86_64-bin
+          mv sql5-windows-x86_64.exe sql5-windows.exe
 
-      - name: Upload
+      - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/macos-arm64/sql5
-            artifacts/macos-x86_64/sql5
-            artifacts/linux-x86_64/sql5
-            artifacts/windows-x86_64/sql5.exe
+            artifacts/sql5-macos-arm64-bin
+            artifacts/sql5-macos-x86_64-bin
+            artifacts/sql5-linux-x86_64-bin
+            artifacts/sql5-windows.exe
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
