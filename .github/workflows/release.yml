@@ -71,24 +71,13 @@ jobs:
           path: upload
 
       - name: List files
-        run: ls -la upload/
+        run: ls -laR upload/
 
-      - name: Upload to GitHub Release
-        run: |
-          ls -la upload/
-          cd upload && ls -la
-        shell: bash
-
-      - name: Upload files
-        run: |
-          for f in upload/*; do
-            echo "Uploading: $f"
-          done
-        shell: bash
-
-      - uses: softprops/action-gh-release@v2
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
         with:
           files: upload/*
           draft: false
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
