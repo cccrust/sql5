@@ -2,13 +2,15 @@
 
 SQLite-compatible database with native CJK FTS5 support. Built with Rust.
 
-## v2.0 - Client-Server Architecture
+## v3.0 - Client-Server Architecture with WebSocket Support
 
-sql5 v2.0 consists of:
+sql5 v3.0 consists of:
 - **Python package** (`sql5` on PyPI): Pure Python client
 - **Rust binary**: Server process providing all SQL functionality
 
-The Python client communicates with the Rust server via JSON over stdin/stdout.
+The Python client communicates with the Rust server via:
+- **Subprocess mode** (default): JSON over stdin/stdout
+- **WebSocket mode** (v3.0): WebSocket protocol for multi-client support
 
 ## Installation
 
@@ -21,14 +23,16 @@ pip install sql5
 ```python
 import sql5
 
-# In-memory database
-db = sql5.connect()
-
-# Or open a file
+# Subprocess mode (default, v2.0 compatible)
 db = sql5.connect("mydb.db")
 
-# Or open a file
-# db = sql5.connect("mydb.db")
+# Or use WebSocket mode (v3.0, multi-client support)
+db = sql5.connect(
+    path="mydb.db",
+    transport="websocket",
+    host="127.0.0.1",
+    port=8080
+)
 
 # Execute SQL
 db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
@@ -88,6 +92,15 @@ print(cursor.fetchall())
 db.close()
 ```
 
+### Connection Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | str | None | Database file path |
+| `transport` | str | "subprocess" | "subprocess" or "websocket" |
+| `host` | str | "127.0.0.1" | WebSocket server host |
+| `port` | int | 8080 | WebSocket server port |
+
 ## CLI Usage
 
 ```bash
@@ -115,10 +128,13 @@ echo "SELECT 1 + 1;" | sql5
 - String functions (UPPER, LOWER, SUBSTR, REPLACE, etc.)
 - Date/time functions (DATE, TIME, DATETIME, STRFTIME)
 - JSON functions (JSON, JSON_EXTRACT, JSON_SET, etc.)
+- WebSocket server mode (v3.0, multi-client support)
+- Subprocess server mode (v2.0, backward compatible)
 
 ## Requirements
 
 - Python 3.8+
+- For WebSocket mode: `pip install websocket-client` (auto-installed as dependency)
 
 ## Development
 

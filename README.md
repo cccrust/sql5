@@ -71,11 +71,59 @@ sql5> .quit
 sql5 /path/to/database.db
 ```
 
+### Python Client
+
+```python
+import sql5
+
+# Subprocess mode (default, v2.0 compatible)
+db = sql5.connect("mydb.db")
+
+# WebSocket mode (v3.0 new, for multi-client)
+db = sql5.connect(
+    path="mydb.db",
+    transport="websocket",
+    host="127.0.0.1",
+    port=8080
+)
+
+# Execute SQL
+cursor = db.execute("SELECT * FROM users")
+print(cursor.fetchall())
+
+db.close()
+```
+
 ### Command line mode
 
 ```bash
 echo "SELECT 1 + 1;" | sql5
 ```
+
+### Server Modes
+
+sql5 supports three modes:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| REPL | `sql5` or `sql5 db.db` | Interactive CLI |
+| stdio server | `sql5 --server [db]` | JSON over stdin/stdout (for Python client) |
+| WebSocket server | `sql5 --websocket <port> [db]` | WebSocket server (multi-client) |
+
+#### WebSocket Server
+
+```bash
+# Start on default port 8080
+sql5 --websocket 8080
+
+# With database file
+sql5 --websocket 8080 mydb.db
+
+# Custom port
+sql5 --websocket 9000
+```
+
+See [Python Client](#python-client) for WebSocket usage.
 
 ## SQL Examples
 
@@ -183,11 +231,11 @@ cargo test
 
 | Version | Date | Features |
 |---------|------|----------|
-| v2.1.0 | 2026-05-04 | Client-server: Python client + Rust server |
+| v3.0.0 | 2026-05-04 | WebSocket server (multi-client support) |
+| v2.4.2 | 2026-05-04 | CI/CD improvements, separate platform builds |
 | v2.0.0 | 2026-05-04 | Client-server architecture |
 | v1.22 | 2026-05-04 | Various fixes |
 | v1.21 | 2026-05-04 | VACUUM (disk mode), Trigger persistence |
-| v1.20 | 2026-05-04 | Trigger CRUD, fire_triggers() |
 
 See [`_doc/`](_doc/) for detailed version notes.
 

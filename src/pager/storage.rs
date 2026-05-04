@@ -10,7 +10,7 @@ use std::path::Path;
 
 // ── Storage trait ─────────────────────────────────────────────────────────
 
-pub trait Storage {
+pub trait Storage: Send + Sync {
     fn read_node(&mut self, page_id: usize) -> Node;
     fn write_node(&mut self, page_id: usize, node: &Node);
     fn alloc_page(&mut self) -> usize;
