@@ -48,7 +48,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target/${{ matrix.target }}/release/sql5${{ matrix.ext }}
-          asset_name: sql5-${{ matrix.platform }}${{ matrix.ext }}
+          name: sql5-${{ matrix.platform }}${{ matrix.ext }}
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
