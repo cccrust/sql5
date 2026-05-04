@@ -74,7 +74,19 @@ jobs:
         run: ls -la upload/
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        run: |
+          ls -la upload/
+          cd upload && ls -la
+        shell: bash
+
+      - name: Upload files
+        run: |
+          for f in upload/*; do
+            echo "Uploading: $f"
+          done
+        shell: bash
+
+      - uses: softprops/action-gh-release@v2
         with:
           files: upload/*
           draft: false
