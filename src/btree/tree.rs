@@ -1,69 +1,114 @@
+//! B+Tree 實作
+//!
+//! B+Tree 是一種自平衡的樹狀資料結構，專為區塊儲存設計。
+//! 所有資料儲存在葉節點，內部節點只儲存索引鍵。
+
 use super::node::{Key, Node, Record};
 use crate::pager::storage::Storage;
 
+// ============================================================================
+// B+Tree 主結構
+// ============================================================================
+
+/// B+Tree 索引結構
+///
+/// # 結構說明
+/// - `order`：每個內部節點最多有 order 個子指標
+/// - `root`：根頁面的 ID
+/// - `size`：樹中記錄的總數
+///
+/// # B+Tree 特性
+/// - 所有資料存在葉節點
+/// - 葉節點雙向鏈結
+/// - 查詢時間複雜度 O(log n)
 pub struct BPlusTree<S: Storage> {
+    /// B+Tree 的 order（每節點最大子節點數）
     order: usize,
+    /// 儲存後端
     storage: S,
+    /// 根頁面 ID
     root: usize,
+    /// 樹中鍵值對數量
     size: usize,
 }
 
 impl<S: Storage> BPlusTree<S> {
+    /// 建立新的 B+Tree
+    ///
+    /// 會分配根頁面並初始化為空的葉節點
     pub fn new(order: usize, mut storage: S) -> Self {
         assert!(order >= 3, "B+Tree order must be >= 3");
+        // 分配並寫入根節點（空葉節點）
         let root_id = storage.alloc_page();
         storage.write_node(root_id, &Node::new_leaf());
         BPlusTree { order, storage, root: root_id, size: 0 }
     }
 
+    /// 開啟已存在的 B+Tree
     pub fn open(order: usize, storage: S, root: usize, size: usize) -> Self {
         BPlusTree { order, storage, root, size }
     }
 
+    /// 插入鍵值對
+    ///
+    /// 若節點已滿，會觸發分裂並返回分裂資訊
     pub fn insert(&mut self, key: Key, value: Vec<u8>) {
         let record = Record { key, value };
         if let Some(split) = self.insert_recursive(self.root, record) {
+            // 根節點分裂，建立新根
             let mut new_root = Node::new_internal();
-            new_root.keys.push(split.0);
-            new_root.children.push(self.root);
-            new_root.children.push(split.1);
+            new_root.keys.push(split.0);        // 中間鍵提升
+            new_root.children.push(self.root);  // 左子樹
+            new_root.children.push(split.1);     // 右子樹
             let new_root_id = self.storage.alloc_page();
             self.storage.write_node(new_root_id, &new_root);
-            self.root = new_root_id;
+            self.root = new_root_id;             // 更新根指標
         }
         self.size += 1;
     }
 
+    /// 精確查詢
+    ///
+    /// 沿路徑找到葉節點，然後線性搜尋
     pub fn search(&mut self, key: &Key) -> Option<Vec<u8>> {
         let leaf_id = self.find_leaf(self.root, key);
         let leaf = self.storage.read_node(leaf_id);
+        // 在葉節點中尋找匹配的記錄
         leaf.records.into_iter().find(|r| &r.key == key).map(|r| r.value)
     }
 
+    /// 範圍查詢 [start, end]
+    ///
+    /// 找到起始葉節點，沿鏈結走訪直到超過 end
     pub fn range_search(&mut self, start: &Key, end: &Key) -> Vec<Record> {
         let mut results = Vec::new();
         let mut idx = self.find_leaf(self.root, start);
         loop {
             let leaf = self.storage.read_node(idx);
-            let next = leaf.next_leaf;
+            let next = leaf.next_leaf;  // 下一個葉節點
             let mut done = false;
             for record in leaf.records {
                 if &record.key >= start && &record.key <= end {
                     results.push(record);
                 } else if &record.key > end {
-                    done = true; break;
+                    done = true; break;  // 已超出範圍
                 }
             }
             if done { break; }
+            // 移動到下一個葉節點
             match next { Some(n) => idx = n, None => break }
         }
         results
     }
 
+    /// 刪除鍵值對
+    ///
+    /// 刪除後若根節點變空且非葉節點，則用其第一個子節點替換根
     pub fn delete(&mut self, key: &Key) -> bool {
         let removed = self.delete_recursive(self.root, key);
         if removed {
             self.size -= 1;
+            // 檢查是否需要降低樹高
             let root_node = self.storage.read_node(self.root);
             if !root_node.is_leaf() && root_node.keys.is_empty() {
                 self.root = root_node.children[0];
@@ -72,11 +117,13 @@ impl<S: Storage> BPlusTree<S> {
         removed
     }
 
+    /// 返回鍵值對數量
     pub fn len(&self) -> usize { self.size }
     pub fn is_empty(&self) -> bool { self.size == 0 }
     pub fn root_page(&self) -> usize { self.root }
     pub fn flush(&mut self) { self.storage.flush(); }
 
+    /// 全表掃描（按鍵排序）
     pub fn scan_all(&mut self) -> Vec<Record> {
         if self.size == 0 { return Vec::new(); }
         let mut results = Vec::with_capacity(self.size);

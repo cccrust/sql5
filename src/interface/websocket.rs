@@ -1,7 +1,25 @@
+//! WebSocket Server：支援多客戶端的非同步伺服器
+//!
+//! 使用方式：
+//! ```bash
+//! # 啟動伺服器
+//! sql5 --websocket 8080 mydb.db
+//!
+//! # Python 客戶端
+//! from sql5 import connect
+//! conn = connect("mydb.db", transport="websocket", port=8080)
+//! cursor = conn.execute("SELECT * FROM users")
+//! ```
+//!
+//! 協定格式（與 stdio server 相同）：
+//! - 請求：{"method": "execute", "sql": "..."}
+//! - 回應：{"ok": true, "columns": [...], "rows": [...], "affected": N}
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+// 非同步 WebSocket 處理
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
@@ -13,14 +31,31 @@ use crate::planner::planner::Planner;
 use crate::planner::{Executor, ResultSet};
 use crate::table::row::Value;
 
+// ============================================================================
+// WsServer：WebSocket 伺服器主結構
+// ============================================================================
+
+/// WebSocket 伺服器
+///
+/// 支援多客戶端並發連線，每個連線獨立處理請求。
+/// 使用 tokio 异步執行環境和 broadcast channel 實現優雅關閉。
 pub struct WsServer {
+    /// 查詢執行器（跨連線共享）
     executor: Arc<Mutex<Executor>>,
+    /// FTS5 虛擬表格集合（跨連線共享）
     fts_tables: Arc<Mutex<HashMap<String, FtsTable>>>,
+    /// 資料庫檔案路徑（若有）
     db_path: Option<String>,
+    /// 廣播通道用於觸發關閉
     shutdown: broadcast::Sender<()>,
 }
 
+// ============================================================================
+// WsServer 實作
+// ============================================================================
+
 impl WsServer {
+    /// 建立記憶體模式的 WebSocket 伺服器
     pub fn new() -> Self {
         let (shutdown, _) = broadcast::channel(1);
         WsServer {
@@ -31,6 +66,7 @@ impl WsServer {
         }
     }
 
+    /// 開啟帶有資料庫檔案的 WebSocket 伺服器
     pub fn open(path: &str) -> std::io::Result<Self> {
         let (shutdown, _) = broadcast::channel(1);
         let executor = Executor::with_disk(path)?;
@@ -42,29 +78,39 @@ impl WsServer {
         })
     }
 
+    /// 啟動 WebSocket 伺服器並監聽連線
+    ///
+    /// 使用 tokio 异步 runtime，支援：
+    /// - 接受新的 TCP 連線
+    /// - 優雅關閉（透過 shutdown channel）
     pub async fn run(&mut self, port: u16) -> std::io::Result<()> {
         let addr = format!("127.0.0.1:{}", port);
         let listener = TcpListener::bind(&addr).await?;
-        println!("WebSocket server listening on ws://{}", addr);
+        println!("WebSocket 伺服器監聽中：ws://{}", addr);
 
+        // 訂閱關閉信號
         let mut shutdown_rx = self.shutdown.subscribe();
 
         loop {
             tokio::select! {
+                // 接受新的 TCP 連線
                 result = listener.accept() => {
                     match result {
                         Ok((stream, addr)) => {
+                            // 克隆 Arc 以共享給每個連線的處理任務
                             let executor = Arc::clone(&self.executor);
                             let fts_tables = Arc::clone(&self.fts_tables);
+                            // 為每個連線 spawn 一個獨立的非同步任務
                             tokio::spawn(handle_connection(stream, addr, executor, fts_tables));
                         }
                         Err(e) => {
-                            eprintln!("Accept error: {}", e);
+                            eprintln!("接受連線錯誤：{}", e);
                         }
                     }
                 }
+                // 接收關閉信號
                 _ = shutdown_rx.recv() => {
-                    println!("Shutting down WebSocket server");
+                    println!("正在關閉 WebSocket 伺服器");
                     break;
                 }
             }
@@ -72,47 +118,61 @@ impl WsServer {
         Ok(())
     }
 
+    /// 發送關閉信號，終止伺服器
     pub fn shutdown(&self) {
         let _ = self.shutdown.send(());
     }
 }
 
+// ============================================================================
+// 連線處理
+// ============================================================================
+
+/// 處理單個 WebSocket 連線
+///
+/// 每個連線獨立运行，使用 spawn_blocking 將 SQL 執行交給執行緒池處理，
+/// 避免阻塞非同步任務。
 async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     executor: Arc<Mutex<Executor>>,
     fts_tables: Arc<Mutex<HashMap<String, FtsTable>>>,
 ) {
-    println!("New WebSocket connection from: {}", addr);
+    println!("收到來自 {} 的 WebSocket 連線", addr);
 
+    // 執行 WebSocket 握手
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
-            eprintln!("WebSocket handshake failed: {}", e);
+            eprintln!("WebSocket 握手失敗：{}", e);
             return;
         }
     };
 
+    // 分割為讀寫半雙工
     let (mut write, mut read) = ws_stream.split();
 
+    // 發送就緒信號
     let _ = write.send(Message::Text(r#"{"ok":true,"ready":true}"#.to_string())).await;
 
+    // 處理訊息迴圈
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
                 let executor = Arc::clone(&executor);
                 let fts_tables = Arc::clone(&fts_tables);
+                // 在執行緒池中處理請求，避免阻塞
                 let response = tokio::task::spawn_blocking(move || {
                     process_request(&text, &executor, &fts_tables)
                 }).await.unwrap_or_else(|_| r#"{"ok":false,"error":"task error"}"#.to_string());
                 let _ = write.send(Message::Text(response)).await;
             }
             Ok(Message::Close(_)) => {
-                println!("Client {} disconnected", addr);
+                println!("客戶端 {} 斷開連線", addr);
                 break;
             }
             Err(e) => {
-                eprintln!("Error reading from {}: {}", addr, e);
+                eprintln!("讀取錯誤（{}）：{}", addr, e);
                 break;
             }
             _ => {}
