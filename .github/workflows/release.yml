@@ -42,7 +42,7 @@ jobs:
           files: target/release/sql5${{ matrix.ext }}
           name: sql5-${{ matrix.platform }}${{ matrix.ext }}
           draft: false
-          replace: true
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
