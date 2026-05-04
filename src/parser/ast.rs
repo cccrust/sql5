@@ -23,6 +23,7 @@ pub enum Statement {
     Analyze(AnalyzeStmt),
     Attach { path: String, alias: String },
     Detach { alias: String },
+    Vacuum,
     Begin,
     Commit,
     Rollback,

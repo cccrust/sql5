@@ -192,6 +192,9 @@ pub enum Plan {
     Detach {
         alias: String,
     },
+
+    /// VACUUM（資料庫整理）
+    Vacuum,
 }
 
 #[derive(Debug, Clone)]

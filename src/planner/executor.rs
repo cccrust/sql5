@@ -154,6 +154,7 @@ impl Executor {
             Plan::Analyze { name }                           => self.exec_analyze(name),
             Plan::Attach { path, alias }                      => self.exec_attach(path, alias),
             Plan::Detach { alias }                           => self.exec_detach(alias),
+            Plan::Vacuum                                    => self.exec_vacuum(),
             Plan::Transaction(op)                            => self.exec_transaction(op),
             Plan::SubqueryScan { query, alias }                  => self.exec_subquery_scan(*query, alias),
             Plan::Cte { definitions, query }                     => self.exec_cte(definitions, *query),
@@ -829,6 +830,64 @@ impl Executor {
             return Err(format!("no such attached database: {}", alias));
         }
         Ok(ResultSet::ok_msg("database detached"))
+    }
+
+    fn exec_vacuum(&mut self) -> Result<ResultSet, String> {
+        let new_storage = SharedStorage::memory();
+        let mut new_catalog = Catalog::new(new_storage.clone());
+
+        for table_name in self.catalog.table_names() {
+            let meta = match self.catalog.get_table(table_name) {
+                Some(m) => m.clone(),
+                None => continue,
+            };
+
+            let _ = new_catalog.create_table(table_name, meta.schema.clone());
+
+            let tbl = if meta.root_page != usize::MAX && meta.root_page > 0 {
+                Table::open(table_name, meta.schema.clone(), self.storage.clone(), meta.root_page, meta.row_count)
+            } else {
+                Table::new(table_name, meta.schema.clone(), self.storage.clone())
+            };
+
+            let rows = {
+                let mut t = tbl;
+                let old_rows = t.scan();
+                drop(t);
+                old_rows
+            };
+
+            let mut new_tbl = Table::new(table_name, meta.schema.clone(), new_storage.clone());
+            for row in rows {
+                new_tbl.insert(row)?;
+            }
+            let root = new_tbl.root_page();
+            let count = new_tbl.len();
+            new_catalog.update_table_meta(table_name, root, count)?;
+        }
+
+        for index_name in self.catalog.index_names() {
+            if let Some(meta) = self.catalog.get_index(index_name) {
+                let _ = new_catalog.create_index(index_name, &meta.table, &meta.columns, meta.unique);
+            }
+        }
+
+        for view_name in self.catalog.view_names() {
+            if let Some(view_meta) = self.catalog.get_view(view_name) {
+                let _ = new_catalog.create_view(view_name, &view_meta.query);
+            }
+        }
+
+        let table_names: Vec<String> = self.tables.keys().cloned().collect();
+        self.tables.clear();
+        self.storage = new_storage;
+        self.catalog = new_catalog;
+
+        for name in table_names {
+            let _ = self.get_table(&name);
+        }
+
+        Ok(ResultSet::ok_msg("vacuum executed"))
     }
 
     fn exec_alter_table(&mut self, stmt: crate::parser::ast::AlterTableStmt) -> Result<ResultSet, String> {

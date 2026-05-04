@@ -86,6 +86,7 @@ impl Parser {
             Token::Analyze  => Ok(Statement::Analyze(self.parse_analyze()?)),
             Token::Attach   => self.parse_attach(),
             Token::Detach   => self.parse_detach(),
+            Token::Vacuum   => { self.advance(); Ok(Statement::Vacuum) }
             t => Err(format!("unexpected token {:?}", t)),
         }
     }
@@ -698,7 +699,7 @@ impl Parser {
             | Token::Virtual | Token::Match | Token::With | Token::Recursive
             | Token::References | Token::KwInteger | Token::Real | Token::Blob
             | Token::Boolean | Token::Nothing | Token::Do | Token::Attach
-            | Token::Detach | Token::Database => {
+            | Token::Detach | Token::Database | Token::Vacuum => {
                 Some(format!("{:?}", token).to_uppercase())
             }
             Token::Ident(s) => Some(s.clone()),
