@@ -50,6 +50,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: List artifacts
         run: ls -la artifacts/
@@ -57,7 +58,12 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: |
+            artifacts/sql5-macos-arm64
+            artifacts/sql5-macos-x86_64
+            artifacts/sql5-linux-x86_64
+            artifacts/sql5-windows-x86_64.exe
           draft: false
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
