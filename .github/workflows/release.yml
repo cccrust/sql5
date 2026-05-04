@@ -78,38 +78,25 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload macOS arm64
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: artifacts/macos-arm64/sql5
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload macOS x86_64
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: artifacts/macos-x86_64/sql5
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Linux
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: artifacts/linux-x86_64/sql5
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Windows
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: artifacts/windows-x86_64/sql5.exe
-          draft: false
+      - name: Upload to Release
+        run: |
+          TAG=${{ github.ref_name }}
+          echo "Uploading for tag: $TAG"
+          
+          # Upload each binary separately with unique names
+          cd artifacts
+          
+          # Rename for clarity before upload
+          cp macos-arm64/sql5 sql5-macos-arm64
+          cp macos-x86_64/sql5 sql5-macos-x86_64
+          cp linux-x86_64/sql5 sql5-linux-x86_64
+          
+          # Upload all
+          gh release upload "$TAG" sql5-macos-arm64 --clobber
+          gh release upload "$TAG" sql5-macos-x86_64 --clobber
+          gh release upload "$TAG" sql5-linux-x86_64 --clobber
+          gh release upload "$TAG" windows-x86_64/sql5.exe --clobber
+          
+          echo "Done!"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
