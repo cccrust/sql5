@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sql5"
-version = "1.22.14"
+version = "1.22.15"
 description = "SQLite-compatible database with CJK FTS5 support"
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,9 +16,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: POSIX :: macOS",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: Microsoft :: Windows",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
