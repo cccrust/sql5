@@ -78,35 +78,14 @@ jobs:
         with:
           path: artifacts
 
-      - name: Wait for release
-        run: |
-          TAG=${{ github.ref_name }}
-          echo "Waiting for release $TAG to be created..."
-          for i in {1..30}; do
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              echo "Release found!"
-              break
-            fi
-            echo "Waiting... ($i)"
-            sleep 2
-          done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload to Release
-        run: |
-          TAG=${{ github.ref_name }}
-          cd artifacts
-          
-          cp macos-arm64/sql5 sql5-macos-arm64
-          cp macos-x86_64/sql5 sql5-macos-x86_64
-          cp linux-x86_64/sql5 sql5-linux-x86_64
-          
-          gh release upload "$TAG" sql5-macos-arm64 --clobber
-          gh release upload "$TAG" sql5-macos-x86_64 --clobber
-          gh release upload "$TAG" sql5-linux-x86_64 --clobber
-          gh release upload "$TAG" windows-x86_64/sql5.exe --clobber
-          
-          echo "Done!"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/macos-arm64/sql5
+            artifacts/macos-x86_64/sql5
+            artifacts/linux-x86_64/sql5
+            artifacts/windows-x86_64/sql5.exe
+          draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
