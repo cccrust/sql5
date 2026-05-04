@@ -1,10 +1,28 @@
-//! SQL5 Server Mode：JSON over stdin/stdout
+//! Server Mode：JSON over stdin/stdout
 //!
-//! Protocol:
-//! - Read lines: {"method": "execute", "sql": "...", "params": [...]}
-//! - Write lines: {"ok": true, "columns": [...], "rows": [...], "affected": N}
-//!               {"ok": false, "error": "..."}
-//! - Special: {"method": "close"} to shutdown server
+//! 透過標準輸入/輸出與 Rust server 程序通訊，適用於單一客戶端場景。
+//!
+//! # 協定格式
+//!
+//! 請求（JSON）：
+//! ```json
+//! {"method": "execute", "sql": "SELECT * FROM users", "params": [...]}
+//! ```
+//!
+//! 回應（JSON）：
+//! ```json
+//! {"ok": true, "columns": ["id", "name"], "rows": [[1, "Alice"]], "affected": 0}
+//! ```
+//!
+//! 錯誤回應：
+//! ```json
+//! {"ok": false, "error": "table not found"}
+//! ```
+//!
+//! 特殊指令：
+//! ```json
+//! {"method": "close"}
+//! ```
 
 use std::io::{self, BufRead, Write};
 use std::collections::HashMap;
@@ -16,13 +34,25 @@ use crate::planner::planner::Planner;
 use crate::planner::{Executor, ResultSet};
 use crate::table::row::Value;
 
+// ============================================================================
+// Server：stdio JSON RPC 伺服器
+// ============================================================================
+
+/// 標準輸入/輸出伺服器
+///
+/// 啟動後持續讀取 stdin 的 JSON 請求，執行 SQL 並將結果寫入 stdout。
+/// 使用行導向的 JSON 格式（每行一個訊息）。
 pub struct Server {
+    /// 查詢執行器
     executor: Arc<Mutex<Executor>>,
+    /// FTS5 虛擬表格集合
     fts_tables: Arc<Mutex<HashMap<String, FtsTable>>>,
+    /// 資料庫檔案路徑（若有磁碟模式）
     db_path: Option<String>,
 }
 
 impl Server {
+    /// 建立記憶體模式的伺服器
     pub fn new() -> Self {
         Server {
             executor: Arc::new(Mutex::new(Executor::new())),
@@ -31,6 +61,7 @@ impl Server {
         }
     }
 
+    /// 開啟帶有資料庫檔案的伺服器
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let executor = Executor::with_disk(&path_str)?;
@@ -41,30 +72,37 @@ impl Server {
         })
     }
 
+    /// 執行伺服器主迴圈
+    ///
+    /// 持續從 stdin 讀取請求，處理後寫入 stdout。
+    /// 直到收到 `{"method": "close"}` 或 EOF 才結束。
     pub fn run(&mut self) {
         let stdin = io::stdin();
         let stdout = io::stdout();
         let mut lines = stdin.lock().lines();
 
-        // Send ready signal
+        // 發送就緒信號
         let _ = writeln!(stdout.lock(), "{{\"ok\":true,\"ready\":true}}");
         let _ = stdout.lock().flush();
 
+        // 主迴圈：處理每行輸入
         loop {
             let line = match lines.next() {
                 Some(Ok(l)) => l,
                 Some(Err(e)) => {
+                    // 讀取錯誤，發送錯誤並退出
                     let _ = writeln!(stdout.lock(), "{{\"ok\":false,\"error\":\"read error: {}\"}}", e);
                     break;
                 }
-                None => break,
+                None => break,  // EOF
             };
 
+            // 處理請求並發送回應
             if let Some(response) = self.handle_line(&line) {
                 let _ = writeln!(stdout.lock(), "{}", response);
                 let _ = stdout.lock().flush();
 
-                // Check if close command
+                // 檢查是否為關閉指令
                 if line.contains("\"close\"") {
                     break;
                 }
@@ -75,6 +113,9 @@ impl Server {
         }
     }
 
+    /// 處理單行請求
+    ///
+    /// 解析 JSON 並分發到對應的處理函式
     fn handle_line(&mut self, line: &str) -> Option<String> {
         let request: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -85,6 +126,7 @@ impl Server {
         match method {
             "execute" => {
                 let sql = request.get("sql")?.as_str()?;
+                // 提取參數（目前未使用，預留給預處理陳述式）
                 let params: Vec<serde_json::Value> = request.get("params")
                     .and_then(|v| v.as_array())
                     .cloned()
@@ -99,12 +141,16 @@ impl Server {
         }
     }
 
+    /// 執行 SQL 語句
+    ///
+    /// 流程：嘗試 FTS 處理 → 解析 SQL → 規劃 → 執行 → 轉 JSON
     fn execute_sql(&mut self, sql: &str, _params: Vec<serde_json::Value>) -> Option<String> {
-        // First try FTS handling
+        // 先嘗試 FTS 特殊處理
         if let Some(result) = self.try_handle_fts(sql) {
             return Some(result);
         }
 
+        // 解析 SQL 語句
         let stmts = match parse(sql) {
             Ok(s) => s,
             Err(e) => return Some(format!(r#"{{"ok":false,"error":"parse error: {}"}}"#, e)),
@@ -113,11 +159,13 @@ impl Server {
         let mut last_result: Option<String> = None;
         for stmt in stmts {
             let mut executor = self.executor.lock().unwrap();
+            // 查詢規劃
             let plan = match Planner::new(executor.catalog()).plan(stmt) {
                 Ok(p) => p,
                 Err(e) => return Some(format!(r#"{{"ok":false,"error":"plan error: {}"}}"#, e)),
             };
 
+            // 執行計劃
             match executor.execute(plan) {
                 Ok(rs) => {
                     last_result = Some(self.resultset_to_json(&rs));
@@ -129,6 +177,7 @@ impl Server {
         last_result
     }
 
+    /// 將 ResultSet 轉換為 JSON 字串
     fn resultset_to_json(&self, rs: &ResultSet) -> String {
         let columns: Vec<String> = rs.columns.clone();
         let rows: Vec<Vec<serde_json::Value>> = rs.rows.iter().map(|row| {
@@ -144,13 +193,18 @@ impl Server {
         serde_json::to_string(&json).unwrap_or_else(|_| r#"{"ok":false,"error":"json serialization error"}"#.to_string())
     }
 
+    /// 嘗試以 FTS 特殊方式處理 SQL
+    ///
+    /// FTS5 語句（CREATE/INSERT/SELECT）需特殊處理，不經過一般 parser
     fn try_handle_fts(&mut self, sql: &str) -> Option<String> {
         let upper = sql.trim().to_uppercase();
 
+        // CREATE VIRTUAL TABLE ... USING FTS5
         if upper.starts_with("CREATE VIRTUAL TABLE") && upper.contains("USING FTS5") {
             return Some(self.fts_create(sql));
         }
 
+        // INSERT INTO FTS 表格
         if upper.starts_with("INSERT INTO") {
             if let Some(name) = extract_table_name_from_insert(sql) {
                 if self.fts_tables.lock().unwrap().contains_key(&name) {
@@ -159,6 +213,7 @@ impl Server {
             }
         }
 
+        // FTS MATCH 查詢
         if upper.contains("MATCH") {
             if let Some((name, query)) = extract_match_query(sql) {
                 if self.fts_tables.lock().unwrap().contains_key(&name) {
@@ -167,10 +222,12 @@ impl Server {
             }
         }
 
-        None
+        None  // 非 FTS 語句
     }
 
+    /// 建立 FTS5 虛擬表格
     fn fts_create(&mut self, sql: &str) -> String {
+        // 解析 CREATE TABLE 語句以取得表格名稱和欄位
         let lower = sql.to_lowercase();
         let after_table = match lower.find("table") {
             Some(p) => p + 5,
@@ -200,13 +257,16 @@ impl Server {
             .filter(|c| !c.is_empty())
             .collect();
 
+        // 檢查是否已存在
         if self.fts_tables.lock().unwrap().contains_key(&name) {
             return format!(r#"{{"ok":false,"error":"FTS table '{}' already exists"}}"#, name);
         }
+        // 建立 FTS 表格
         self.fts_tables.lock().unwrap().insert(name.clone(), FtsTable::new(&name, columns));
         format!(r#"{{"ok":true,"columns":[],"rows":[],"affected":1}}"#)
     }
 
+    /// 插入 FTS 資料
     fn fts_insert(&mut self, sql: &str, table_name: &str) -> String {
         let lower = sql.to_lowercase();
         let after_values = match lower.find("values") {
@@ -232,6 +292,7 @@ impl Server {
         }
     }
 
+    /// FTS 查詢
     fn fts_select(&mut self, table_name: &str, query: &str) -> String {
         let mut fts = self.fts_tables.lock().unwrap();
         let tbl = match fts.get_mut(table_name) {
@@ -241,6 +302,7 @@ impl Server {
         let results = tbl.search(query);
         let col_names = tbl.columns.clone();
 
+        // 輸出欄位：rowid, score, 原始欄位
         let mut out_cols = vec!["rowid".to_string(), "score".to_string()];
         out_cols.extend(col_names);
 
@@ -259,6 +321,7 @@ impl Server {
         serde_json::to_string(&json).unwrap_or_else(|_| r#"{"ok":false,"error":"json error"}"#.to_string())
     }
 
+    /// 關閉伺服器，若有磁碟檔案則刷寫資料
     pub fn close(&mut self) {
         if self.db_path.is_some() {
             self.executor.lock().unwrap().flush();
@@ -270,6 +333,11 @@ impl Default for Server {
     fn default() -> Self { Self::new() }
 }
 
+// ============================================================================
+// 輔助函式
+// ============================================================================
+
+/// 將 Value 轉換為 JSON 值
 fn value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Null => serde_json::Value::Null,
@@ -282,6 +350,7 @@ fn value_to_json(v: &Value) -> serde_json::Value {
     }
 }
 
+/// 從 INSERT 語句中取出表格名稱
 fn extract_table_name_from_insert(sql: &str) -> Option<String> {
     let lower = sql.to_lowercase();
     let after_into = lower.find("into")? + 4;
@@ -290,6 +359,7 @@ fn extract_table_name_from_insert(sql: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
+/// 從 MATCH 語句中取出表格名稱和查詢字串
 fn extract_match_query(sql: &str) -> Option<(String, String)> {
     let lower = sql.to_lowercase();
     let match_pos = lower.find("match")?;
@@ -305,6 +375,9 @@ fn extract_match_query(sql: &str) -> Option<(String, String)> {
     if table_name.is_empty() || query.is_empty() { None } else { Some((table_name, query)) }
 }
 
+/// 分割 SQL VALUES 子句中的多個值
+///
+/// 處理引號內的逗號（如 'hello, world'）
 fn split_sql_values(s: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();

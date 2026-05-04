@@ -1,11 +1,17 @@
-"""sql5 Client-Server Integration Tests (pytest version)
+"""
+sql5 Python 客戶端整合測試
 
-This test module verifies the sql5 Python client can communicate with
-the Rust sql5 server binary via JSON over stdin/stdout.
+本測試模組驗證 sql5 Python 客戶端能透過 JSON over stdin/stdout
+與 Rust sql5 伺服器通訊。
 
-Architecture:
-  Python client (sql5.connect()) -> subprocess.Popen(sql5 --server)
-                               -> JSON over stdin/stdout
+架構：
+  Python 客戶端 (sql5.connect())
+       ↓
+  subprocess.Popen(sql5 --server)
+       ↓
+  JSON over stdin/stdout
+       ↓
+  Rust sql5 伺服器
 """
 
 import os
@@ -13,12 +19,14 @@ import sys
 import tempfile
 import pytest
 
+# 取得測試腳本所在目錄
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.dirname(script_dir)
 
-# Find local sql5 binary before importing sql5
+# 測試前先找到本地的 sql5 二進位檔
 def get_local_binary():
-    """Find local sql5 binary for testing."""
+    """尋找本地的 sql5 二進位檔用於測試"""
+    # 依序檢查可能的路徑
     paths_to_check = [
         os.path.join(project_dir, "target", "debug", "sql5"),
         os.path.join(project_dir, "..", "target", "debug", "sql5"),
@@ -29,12 +37,13 @@ def get_local_binary():
             return p
     return None
 
-# Set SQL5_BINARY before importing sql5
+# 匯入 sql5 前先設定 SQL5_BINARY
 local_binary = get_local_binary()
 if local_binary:
     os.environ["SQL5_BINARY"] = local_binary
-    print(f"Using local binary: {local_binary}", file=sys.stderr)
+    print(f"使用本地二進位檔：{local_binary}", file=sys.stderr)
 
+# 將專案目錄加入 Python 路徑
 sys.path.insert(0, project_dir)
 
 import sql5
@@ -43,39 +52,47 @@ from sql5 import connect, Error
 
 @pytest.fixture
 def db():
-    """Fixture to provide a database connection."""
-    connection = connect()
+    """測試用的資料庫連線 fixture"""
+    connection = connect()  # 記憶體模式
     yield connection
     connection.close()
 
 
+# ============================================================================
+# 基本操作測試
+# ============================================================================
+
 class TestBasicOperations:
-    """Basic SQL operations tests."""
+    """基本 SQL 操作測試"""
 
     def test_basic_select(self, db):
-        """Test 1: Basic SELECT query."""
+        """測試 1：基本 SELECT 查詢"""
         cursor = db.execute("SELECT 1 AS a, 2 AS b, 3 AS c")
         row = cursor.fetchone()
         assert row == [1, 2, 3]
 
     def test_select_multiple_rows(self, db):
-        """Test SELECT with multiple rows."""
+        """測試：多列 UNION 查詢"""
         cursor = db.execute("SELECT 1 UNION SELECT 2 UNION SELECT 3")
         rows = cursor.fetchall()
         assert len(rows) == 3
 
     def test_select_with_alias(self, db):
-        """Test SELECT with column alias."""
+        """測試：帶欄位別名的 SELECT"""
         cursor = db.execute("SELECT 42 AS answer, 'hello' AS greeting")
         row = cursor.fetchone()
         assert row == [42, "hello"]
 
 
+# ============================================================================
+# 建立表格與插入測試
+# ============================================================================
+
 class TestCreateAndInsert:
-    """CREATE TABLE and INSERT tests."""
+    """CREATE TABLE 和 INSERT 測試"""
 
     def test_create_table(self, db):
-        """Test CREATE TABLE."""
+        """測試：CREATE TABLE 建立表格"""
         db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
         cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
@@ -83,7 +100,7 @@ class TestCreateAndInsert:
         assert "users" in table_names
 
     def test_insert_single_row(self, db):
-        """Test INSERT single row."""
+        """測試：INSERT 單列"""
         db.execute("CREATE TABLE test_insert (id INTEGER, val TEXT)")
         db.execute("INSERT INTO test_insert VALUES (1, 'hello')")
         cursor = db.execute("SELECT * FROM test_insert")
@@ -91,7 +108,7 @@ class TestCreateAndInsert:
         assert row == [1, "hello"]
 
     def test_insert_multiple_rows(self, db):
-        """Test INSERT multiple rows."""
+        """測試：INSERT 多列"""
         db.execute("CREATE TABLE test_multi (id INTEGER, name TEXT)")
         db.execute("INSERT INTO test_multi VALUES (1, 'Alice')")
         db.execute("INSERT INTO test_multi VALUES (2, 'Bob')")
@@ -104,7 +121,7 @@ class TestCreateAndInsert:
         assert rows[2] == [3, "Charlie"]
 
     def test_update_row(self, db):
-        """Test UPDATE row."""
+        """測試：UPDATE 更新資料"""
         db.execute("CREATE TABLE test_update (id INTEGER, val TEXT)")
         db.execute("INSERT INTO test_update VALUES (1, 'old')")
         db.execute("UPDATE test_update SET val = 'new' WHERE id = 1")
@@ -113,7 +130,7 @@ class TestCreateAndInsert:
         assert row == ["new"]
 
     def test_delete_row(self, db):
-        """Test DELETE row."""
+        """測試：DELETE 刪除資料"""
         db.execute("CREATE TABLE test_delete (id INTEGER, val TEXT)")
         db.execute("INSERT INTO test_delete VALUES (1, 'keep')")
         db.execute("INSERT INTO test_delete VALUES (2, 'delete')")
@@ -123,19 +140,23 @@ class TestCreateAndInsert:
         assert count == 1
 
 
-class TestFullTextSearch:
-    """FTS5 full-text search tests."""
+# ============================================================================
+# 全文檢索測試
+# ============================================================================
 
-    @pytest.mark.skip(reason="FTS5 may not be fully supported")
+class TestFullTextSearch:
+    """FTS5 全文檢索測試"""
+
+    @pytest.mark.skip(reason="FTS5 可能尚未完全支援")
     def test_fts5_create(self, db):
-        """Test CREATE VIRTUAL TABLE with FTS5."""
+        """測試：CREATE VIRTUAL TABLE 建立 FTS5 表格"""
         db.execute("CREATE VIRTUAL TABLE articles USING fts5(title, content)")
         cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
         assert any("articles" in t[0] for t in tables)
 
     def test_fts5_insert_and_search(self, db):
-        """Test FTS5 insert and search."""
+        """測試：FTS5 插入與搜尋"""
         db.execute("CREATE VIRTUAL TABLE docs USING fts5(content)")
         db.execute("INSERT INTO docs VALUES ('Python is great')")
         db.execute("INSERT INTO docs VALUES ('Rust is fast')")
@@ -145,9 +166,9 @@ class TestFullTextSearch:
         rows = cursor.fetchall()
         assert len(rows) >= 1
 
-    @pytest.mark.skip(reason="FTS5 Chinese may not be fully supported")
+    @pytest.mark.skip(reason="FTS5 中文可能尚未完全支援")
     def test_fts5_chinese(self, db):
-        """Test FTS5 with Chinese text."""
+        """測試：FTS5 中文全文檢索"""
         db.execute("CREATE VIRTUAL TABLE articles USING fts5(title, body)")
         db.execute("INSERT INTO articles VALUES ('Hello World', 'The quick brown fox')")
         db.execute("INSERT INTO articles VALUES ('Rust Guide', 'Memory safety without GC')")
@@ -162,11 +183,15 @@ class TestFullTextSearch:
         assert len(rows) >= 1
 
 
+# ============================================================================
+# 參數化查詢測試
+# ============================================================================
+
 class TestParameterizedQueries:
-    """Parameterized query tests."""
+    """參數化查詢測試（防止 SQL 注入）"""
 
     def test_parameterized_query_positional(self, db):
-        """Test parameterized queries with ? placeholders."""
+        """測試：使用 ? 佔位符的參數化查詢"""
         db.execute("CREATE TABLE t (id INTEGER, val TEXT)")
         db.execute("INSERT INTO t VALUES (?, ?)", (1, "hello"))
         db.execute("INSERT INTO t VALUES (?, ?)", (2, "world"))
@@ -176,7 +201,7 @@ class TestParameterizedQueries:
         assert row == [1, "hello"]
 
     def test_parameterized_multiple_rows(self, db):
-        """Test parameterized query with multiple results."""
+        """測試：參數化查詢返回多列"""
         db.execute("CREATE TABLE params (id INTEGER, name TEXT)")
         db.execute("INSERT INTO params VALUES (1, 'Alice')")
         db.execute("INSERT INTO params VALUES (2, 'Bob')")
@@ -187,7 +212,7 @@ class TestParameterizedQueries:
         assert len(rows) == 2
 
     def test_parameterized_update(self, db):
-        """Test parameterized UPDATE."""
+        """測試：參數化 UPDATE"""
         db.execute("CREATE TABLE uparams (id INTEGER, val TEXT)")
         db.execute("INSERT INTO uparams VALUES (1, 'old')")
         db.execute("UPDATE uparams SET val = ? WHERE id = ?", ("new", 1))
@@ -196,17 +221,21 @@ class TestParameterizedQueries:
         assert row == ["new"]
 
 
+# ============================================================================
+# Cursor 操作測試
+# ============================================================================
+
 class TestCursorOperations:
-    """Cursor operations tests."""
+    """Cursor 指標操作測試"""
 
     def test_cursor_fetchone(self, db):
-        """Test cursor fetchone."""
+        """測試：fetchone 取一列"""
         cursor = db.execute("SELECT 1 AS id")
         row = cursor.fetchone()
         assert row == [1]
 
     def test_cursor_fetchall(self, db):
-        """Test cursor fetchall."""
+        """測試：fetchall 取所有列"""
         db.execute("CREATE TABLE fetchall (id INTEGER)")
         db.execute("INSERT INTO fetchall VALUES (1)")
         db.execute("INSERT INTO fetchall VALUES (2)")
@@ -216,7 +245,7 @@ class TestCursorOperations:
         assert len(rows) == 3
 
     def test_cursor_iteration(self, db):
-        """Test cursor iteration with for loop."""
+        """測試：使用 for 迴圈迭代 cursor"""
         db.execute("CREATE TABLE nums (n INTEGER)")
         for i in range(5):
             db.execute("INSERT INTO nums VALUES (?)", (i,))
@@ -229,11 +258,15 @@ class TestCursorOperations:
         assert count == 5
 
 
+# ============================================================================
+# 上下文管理器測試
+# ============================================================================
+
 class TestContextManager:
-    """Context manager tests."""
+    """上下文管理器（with 語句）測試"""
 
     def test_context_manager(self):
-        """Test context manager (with statement)."""
+        """測試：使用 with 語句自動關閉連線"""
         with connect() as db:
             db.execute("CREATE TABLE ctx_test (id INTEGER)")
             db.execute("INSERT INTO ctx_test VALUES (42)")
@@ -242,19 +275,23 @@ class TestContextManager:
             assert row == [42]
 
     def test_context_manager_rollback(self):
-        """Test context manager with rollback on exception."""
+        """測試：上下文管理器中的例外處理"""
         with pytest.raises(Exception):
             with connect() as db:
                 db.execute("CREATE TABLE ctx_rollback (id INTEGER)")
-                raise Exception("Simulated error")
+                raise Exception("模擬錯誤")
 
+
+# ============================================================================
+# 磁碟資料庫測試
+# ============================================================================
 
 class TestDiskDatabase:
-    """Persistent disk database tests."""
+    """持久化磁碟資料庫測試"""
 
-    @pytest.mark.skip(reason="Disk database may not be fully supported")
+    @pytest.mark.skip(reason="磁碟資料庫可能尚未完全支援")
     def test_disk_database(self):
-        """Test persistent disk database."""
+        """測試：持久化磁碟資料庫"""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
 
@@ -273,9 +310,9 @@ class TestDiskDatabase:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
-    @pytest.mark.skip(reason="Disk database may not be fully supported")
+    @pytest.mark.skip(reason="磁碟資料庫可能尚未完全支援")
     def test_disk_database_multiple_connections(self):
-        """Test multiple connections to same disk database."""
+        """測試：多個連線訪問同一磁碟資料庫"""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
 
@@ -299,17 +336,21 @@ class TestDiskDatabase:
                 os.unlink(db_path)
 
 
+# ============================================================================
+# 錯誤處理測試
+# ============================================================================
+
 class TestErrorHandling:
-    """Error handling tests."""
+    """錯誤處理測試"""
 
     def test_nonexistent_table(self, db):
-        """Test error handling for invalid SQL."""
+        """測試：查詢不存在的表格"""
         cursor = db.execute("SELECT * FROM nonexistent_table")
         rows = cursor.fetchall()
         assert rows == []
 
     def test_syntax_error(self, db):
-        """Test syntax error handling."""
+        """測試：語法錯誤處理"""
         try:
             cursor = db.execute("SELECT * FORM invalid_syntax")
             rows = cursor.fetchall()
@@ -318,11 +359,15 @@ class TestErrorHandling:
             pass
 
 
+# ============================================================================
+# 多語句測試
+# ============================================================================
+
 class TestMultipleStatements:
-    """Multiple SQL statements tests."""
+    """多語句 SQL 測試"""
 
     def test_multiple_statements(self, db):
-        """Test multiple SQL statements in one execute."""
+        """測試：在一個 execute 中執行多個語句"""
         db.execute("CREATE TABLE multi (id INTEGER)")
         db.execute("INSERT INTO multi VALUES (1)")
         db.execute("INSERT INTO multi VALUES (2)")
@@ -331,11 +376,15 @@ class TestMultipleStatements:
         assert count == 2
 
 
+# ============================================================================
+# 聚合函式測試
+# ============================================================================
+
 class TestAggregates:
-    """Aggregate function tests."""
+    """聚合函式測試"""
 
     def test_count_aggregate(self, db):
-        """Test COUNT aggregate."""
+        """測試：COUNT 聚合函式"""
         db.execute("CREATE TABLE agg_test (val INTEGER)")
         db.execute("INSERT INTO agg_test VALUES (10)")
         db.execute("INSERT INTO agg_test VALUES (20)")
@@ -345,7 +394,7 @@ class TestAggregates:
         assert count == 3
 
     def test_sum_aggregate(self, db):
-        """Test SUM aggregate."""
+        """測試：SUM 聚合函式"""
         db.execute("CREATE TABLE sum_test (val INTEGER)")
         db.execute("INSERT INTO sum_test VALUES (10)")
         db.execute("INSERT INTO sum_test VALUES (20)")
@@ -355,7 +404,7 @@ class TestAggregates:
         assert total == 60
 
     def test_avg_aggregate(self, db):
-        """Test AVG aggregate."""
+        """測試：AVG 聚合函式"""
         db.execute("CREATE TABLE avg_test (val INTEGER)")
         db.execute("INSERT INTO avg_test VALUES (10)")
         db.execute("INSERT INTO avg_test VALUES (20)")
@@ -365,7 +414,7 @@ class TestAggregates:
         assert average == 20.0
 
     def test_min_max_aggregate(self, db):
-        """Test MIN/MAX aggregate."""
+        """測試：MIN/MAX 聚合函式"""
         db.execute("CREATE TABLE minmax_test (val INTEGER)")
         db.execute("INSERT INTO minmax_test VALUES (30)")
         db.execute("INSERT INTO minmax_test VALUES (10)")
@@ -375,12 +424,16 @@ class TestAggregates:
         assert row == [10, 30]
 
 
-class TestJoins:
-    """JOIN tests."""
+# ============================================================================
+# JOIN 測試
+# ============================================================================
 
-    @pytest.mark.skip(reason="JOIN may not be fully supported")
+class TestJoins:
+    """JOIN 連接測試"""
+
+    @pytest.mark.skip(reason="JOIN 可能尚未完全支援")
     def test_inner_join(self, db):
-        """Test INNER JOIN."""
+        """測試：INNER JOIN 內連接"""
         db.execute("CREATE TABLE orders (id INTEGER, customer_id INTEGER)")
         db.execute("CREATE TABLE customers (id INTEGER, name TEXT)")
         db.execute("INSERT INTO customers VALUES (1, 'Alice')")
@@ -396,11 +449,15 @@ class TestJoins:
         assert len(rows) == 2
 
 
+# ============================================================================
+# 子查詢測試
+# ============================================================================
+
 class TestSubqueries:
-    """Subquery tests."""
+    """子查詢測試"""
 
     def test_subquery_in_where(self, db):
-        """Test subquery in WHERE clause."""
+        """測試：WHERE 子句中的子查詢"""
         db.execute("CREATE TABLE outer_tbl (id INTEGER)")
         db.execute("CREATE TABLE inner_tbl (id INTEGER, val TEXT)")
         db.execute("INSERT INTO inner_tbl VALUES (1, 'found')")
@@ -414,11 +471,15 @@ class TestSubqueries:
         assert rows[0][1] == "found"
 
 
+# ============================================================================
+# 交易測試
+# ============================================================================
+
 class TestTransactions:
-    """Transaction tests."""
+    """交易測試"""
 
     def test_explicit_transaction(self, db):
-        """Test explicit BEGIN/COMMIT."""
+        """測試：明確的 BEGIN/COMMIT"""
         db.execute("CREATE TABLE trans_test (id INTEGER)")
         db.execute("BEGIN")
         db.execute("INSERT INTO trans_test VALUES (1)")

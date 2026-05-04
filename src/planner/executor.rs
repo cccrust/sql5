@@ -1,4 +1,38 @@
 //! Executor：執行邏輯計畫，回傳 ResultSet
+//!
+//! ## 執行器職責
+//!
+//! Executor 負責：
+//! 1. 接收 Planner 產出的 Plan（邏輯執行计划）
+//! 2. 按照计划的運算子順序執行
+//! 3. 返回查詢結果（ResultSet）
+//!
+//! ## 執行流程
+//!
+//! ```text
+//! Plan → [Executor] → ResultSet → [Server] → JSON
+//! ```
+//!
+//! ## Plan 類型與執行方法對應
+//!
+//! | Plan 變體 | 執行方法 | 說明 |
+//! |-----------|---------|------|
+//! | SeqScan | exec_seq_scan | 全表掃描 |
+//! | IndexScan | exec_index_scan | 索引掃描 |
+//! | Filter | exec_filter | 過濾 |
+//! | Projection | exec_projection | 投影 |
+//! | Join | exec_join | 連接 |
+//! | Aggregate | exec_aggregate | 聚合 |
+//! | Sort | exec_sort | 排序 |
+//! | Limit | exec_limit | 分頁 |
+//! | Insert/Update/Delete | exec_* | 資料修改 |
+//!
+//! ## 交易的支援
+//!
+//! 使用 TransactionManager 管理交易狀態，支援：
+//! - BEGIN：開始交易
+//! - COMMIT：提交交易
+//! - ROLLBACK：回滾交易
 
 use std::collections::HashMap;
 
@@ -16,15 +50,24 @@ use super::planner::Planner;
 
 // ── ResultSet ─────────────────────────────────────────────────────────────
 
+/// 查詢結果集
+///
+/// 包含：
+/// - columns：欄位名稱列表
+/// - rows：查詢結果（二維向量）
 #[derive(Debug, Default, Clone)]
 pub struct ResultSet {
+    /// 欄位名稱
     pub columns: Vec<String>,
+    /// 查詢結果列
     pub rows:    Vec<Vec<Value>>,
 }
 
 impl ResultSet {
+    /// 建立空的結果集
     pub fn empty() -> Self { Self::default() }
 
+    /// 建立單一訊息的結果集（通常用於元指令）
     pub fn ok_msg(msg: &str) -> Self {
         ResultSet {
             columns: vec!["result".into()],
@@ -32,8 +75,10 @@ impl ResultSet {
         }
     }
 
+    /// 取得列數
     pub fn row_count(&self) -> usize { self.rows.len() }
 
+    /// 除錯用：格式化輸出結果
     pub fn display(&self) {
         if self.columns.is_empty() { return; }
         let header = self.columns.join(" | ");
@@ -49,18 +94,38 @@ impl ResultSet {
 // ── Executor ──────────────────────────────────────────────────────────────
 // 使用 SharedStorage 管理資料表（可選 Memory 或 Disk）
 
+/// 查詢執行器
+///
+/// 持有資料庫的存儲後端、目錄、表格等資源，執行 Plan 並返回結果。
+///
+/// # 資源管理
+///
+/// - storage：底層存儲（記憶體或磁碟）
+/// - catalog：系統目錄（表格定義）
+/// - tables：已開啟的表格
+/// - txn_mgr：交易管理器
 pub struct Executor {
+    /// 存儲後端（支援記憶體或磁碟模式）
     storage:     SharedStorage,
+    /// 系統目錄
     catalog:     Catalog<SharedStorage>,
+    /// 已開啟的表格
     tables:      HashMap<String, Table<SharedStorage>>,
+    /// 交易管理器
     txn_mgr:     TransactionManager,
+    /// CTE 查詢結果快取
     cte_cache:   HashMap<String, ResultSet>,
+    /// 表格約束
     constraints: HashMap<String, crate::planner::constraints::TableConstraints>,
+    /// 快取大小
     cache_size:  usize,
+    /// 是否正在執行觸發器（防止遞迴）
     triggering:  bool,
+    /// 附加的資料庫
     attached:    HashMap<String, AttachedDb>,
 }
 
+/// 附加的資料庫連線
 struct AttachedDb {
     alias:   String,
     storage: SharedStorage,
@@ -69,6 +134,7 @@ struct AttachedDb {
 }
 
 impl Executor {
+    /// 建立記憶體模式的執行器（適用於 REPL、測試）
     pub fn new() -> Self {
         let storage = SharedStorage::memory();
         let catalog = Catalog::new(storage.clone());
@@ -85,19 +151,23 @@ impl Executor {
         }
     }
 
+    /// 建立磁碟模式的執行器
+    ///
+    /// # 參數
+    /// - path：資料庫檔案路徑
     pub fn with_disk(path: &str) -> std::io::Result<Self> {
         // 使用 LRU 快取（256 頁容量）
         let storage = SharedStorage::disk_with_cache(path, 256)?;
         let cache_size = storage.cache_size();
-        
+
         // 先釋放 lock 再使用 storage（避免 deadlock）
         let root = storage.lock().catalog_root();
-        
+
         let catalog = match root {
             Some(root) => Catalog::open(storage.clone(), root),
             None => Catalog::new(storage.clone()),
         };
-        
+
         Ok(Executor {
             storage,
             catalog,
@@ -111,18 +181,24 @@ impl Executor {
         })
     }
 
+    /// 取得目錄的唯讀參照
     pub fn catalog(&self) -> &Catalog<SharedStorage> { &self.catalog }
 
+    /// 取得目錄根頁面
     pub fn catalog_root(&self) -> usize {
         self.catalog.root_page()
     }
 
+    /// 刷新資料（刷寫快取到磁碟）
     pub fn flush(&mut self) {
         let root = self.catalog.root_page();
         self.storage.lock().flush();
         self.storage.lock().set_catalog_root(root);
     }
 
+    /// 執行計畫並返回結果
+    ///
+    /// 根據 Plan 的類型分發到對應的執行方法
     pub fn execute(&mut self, plan: Plan) -> Result<ResultSet, String> {
         match plan {
             Plan::Projection { input, columns }              => self.exec_projection(*input, columns),

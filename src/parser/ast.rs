@@ -1,91 +1,230 @@
-//! AST：SQL 語句的抽象語法樹節點定義
+//! AST（Abstract Syntax Tree）：SQL 語句的抽象語法樹節點定義
+//!
+//! ## 設計理念
+//!
+//! AST 是 SQL 語句的樹狀結構表示，每個節點代表一個語法結構：
+//! - **Statement（語句）**：執行的單位，如 SELECT、INSERT
+//! - **Expr（運算式）**：有值的表達，如 `1 + 2`、`name LIKE 'A%'`
+//! - **SelectItem（選擇項）**：SELECT 後的欄位
+//!
+//! ## 遍歷方式
+//!
+//! AST 是遞迴結構，通常使用 visitor 模式遍歷：
+//! ```text
+//! SELECT name FROM users WHERE age > 18
+//!         ↓
+//! Statement::Select(SelectStmt {
+//!     columns: [SelectItem::Expr(...)],
+//!     from: Some(FromItem::Table(...)),
+//!     where_: Some(Expr::BinOp(...)),
+//! })
+//! ```
 
 // ── 頂層語句 ──────────────────────────────────────────────────────────────
 
+/// SQL 語句的根類型列舉
+///
+/// 所有可執行的 SQL 語句都會被解析為此列舉的某個變體。
+///
+/// # 變體說明
+///
+/// | 變體 | 對應 SQL | 說明 |
+/// |------|----------|------|
+/// | `Select` | SELECT ... | 查詢語句 |
+/// | `Insert` | INSERT INTO ... | 插入資料 |
+/// | `Update` | UPDATE ... SET ... | 更新資料 |
+/// | `Delete` | DELETE FROM ... | 刪除資料 |
+/// | `CreateTable` | CREATE TABLE ... | 建立表格 |
+/// | `DropTable` | DROP TABLE ... | 刪除表格 |
+/// | `CreateIndex` | CREATE INDEX ... | 建立索引 |
+/// | `Begin` | BEGIN | 開始交易 |
+/// | `Commit` | COMMIT | 提交交易 |
+/// | `Rollback` | ROLLBACK | 回滾交易 |
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    /// SELECT 查詢語句
     Select(SelectStmt),
+    /// INSERT 插入語句
     Insert(InsertStmt),
+    /// UPDATE 更新語句
     Update(UpdateStmt),
+    /// DELETE 刪除語句
     Delete(DeleteStmt),
+    /// CREATE TABLE 建立表格
     CreateTable(CreateTableStmt),
+    /// DROP TABLE 刪除表格
     DropTable(DropTableStmt),
+    /// CREATE INDEX 建立索引
     CreateIndex(CreateIndexStmt),
+    /// DROP INDEX 刪除索引
     DropIndex(DropIndexStmt),
+    /// ALTER TABLE 修改表格結構
     AlterTable(AlterTableStmt),
+    /// PRAGMA 指令
     Pragma(PragmaStmt),
+    /// EXPLAIN 查詢计划
     Explain(ExplainStmt),
+    /// CREATE VIEW 建立視圖
     CreateView(CreateViewStmt),
+    /// DROP VIEW 刪除視圖
     DropView(DropViewStmt),
+    /// CREATE TRIGGER 建立觸發器
     CreateTrigger(CreateTriggerStmt),
+    /// DROP TRIGGER 刪除觸發器
     DropTrigger(DropTriggerStmt),
+    /// REINDEX 重建索引
     Reindex(ReindexStmt),
+    /// ANALYZE 分析資料庫
     Analyze(AnalyzeStmt),
+    /// ATTACH DATABASE 附加資料庫
     Attach { path: String, alias: String },
+    /// DETACH DATABASE 分離資料庫
     Detach { alias: String },
+    /// VACUUM 清理資料庫
     Vacuum,
+    /// BEGIN 開始交易
     Begin,
+    /// COMMIT 提交交易
     Commit,
+    /// ROLLBACK 回滾交易
     Rollback,
 }
 
 // ── SELECT ────────────────────────────────────────────────────────────────
 
+/// SELECT 查詢語句結構
+///
+/// 包含查詢的所有子句：
+/// - WITH：CTE（公用表達式）
+/// - SELECT：DISTINCT、欄位列表
+/// - FROM：資料來源、JOIN
+/// - WHERE：過濾條件
+/// - GROUP BY / HAVING：分組
+/// - ORDER BY：排序
+/// - LIMIT / OFFSET：分頁
+/// - UNION：集合運算
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
-    pub with:      Vec<Cte>,            // WITH ... AS (...)
+    /// WITH ... AS (...)  公用表達式
+    pub with:      Vec<Cte>,
+    /// DISTINCT 去重複
     pub distinct:  bool,
+    /// 選擇的欄位列表
     pub columns:   Vec<SelectItem>,
-    pub from:      Option<FromItem>,    // table name 或子查詢
+    /// FROM 子句（表格名稱或子查詢）
+    pub from:      Option<FromItem>,
+    /// JOIN 子句列表
     pub joins:     Vec<Join>,
+    /// WHERE 條件
     pub where_:    Option<Expr>,
+    /// GROUP BY 分組欄位
     pub group_by:  Vec<Expr>,
+    /// HAVING 條件（分組後過濾）
     pub having:    Option<Expr>,
+    /// ORDER BY 排序
     pub order_by:  Vec<OrderItem>,
+    /// LIMIT 限制筆數
     pub limit:     Option<Expr>,
+    /// OFFSET 偏移量
     pub offset:    Option<Expr>,
-    pub union_with: Option<Box<(SelectStmt, bool)>>,  // (select_stmt, is_all)
+    /// UNION 集合運算（right, is_all）
+    pub union_with: Option<Box<(SelectStmt, bool)>>,
 }
 
+/// SELECT 的欄位選擇項
+///
+/// 有三種形式：
+/// - `Star`：*（所有欄位）
+/// - `TableStar`：table.*（指定表的所有欄位）
+/// - `Expr`：運算式，可帶別名
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelectItem {
-    Star,                          // *
-    TableStar(String),             // table.*
+    /// * 所有欄位
+    Star,
+    /// table.* 指定表格的所有欄位
+    TableStar(String),
+    /// 運算式，可選別名
     Expr { expr: Expr, alias: Option<String> },
 }
 
+/// 表格引用（含可選別名）
+///
+/// 用於 FROM、JOIN 中引用表格
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRef {
+    /// 表格名稱
     pub name:  String,
+    /// 別名（AS 之後的名稱）
     pub alias: Option<String>,
 }
 
-/// FROM 子句可以是資料表名稱或子查詢
+/// FROM 子句的資料來源
+///
+/// 可以是：
+/// - 表格名稱（含可選別名）
+/// - 子查詢（必須帶別名）
 #[derive(Debug, Clone, PartialEq)]
 pub enum FromItem {
+    /// 表格引用
     Table(TableRef),
+    /// 子查詢（需帶別名）
     Subquery { query: Box<SelectStmt>, alias: String },
 }
 
-/// CTE（Common Table Expression）定義：WITH name AS (query)
+/// CTE（Common Table Expression）公用表達式
+///
+/// 語法：`WITH name AS (query)`
+///
+/// # 範例
+/// ```sql
+/// WITH active_users AS (
+///     SELECT * FROM users WHERE active = true
+/// )
+/// SELECT * FROM active_users WHERE id > 100
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cte {
+    /// CTE 名稱
     pub name:  String,
+    /// 查詢定義
     pub query: Box<SelectStmt>,
 }
 
+/// JOIN 連接操作
+///
+/// 包含連接的類型、目標表格、連接條件
 #[derive(Debug, Clone, PartialEq)]
 pub struct Join {
+    /// 連接類型
     pub kind:      JoinKind,
-    pub table:     TableRef,   // 暫保留 TableRef，子查詢 JOIN 後續擴充
+    /// 目標表格引用
+    pub table:     TableRef,
+    /// 連接條件
     pub condition: JoinCondition,
 }
 
+/// JOIN 連接類型
+///
+/// | 類型 | 說明 |
+/// |------|------|
+/// | Inner | 內連接，只保留匹配列 |
+/// | Left | 左外連接，保留左表所有列 |
+/// | Right | 右外連接，保留右表所有列 |
+/// | Full | 全外連接 |
+/// | Cross | 交叉連接（笛卡爾積） |
+/// | Natural | 自然連接（同名欄位自動匹配） |
 #[derive(Debug, Clone, PartialEq)]
 pub enum JoinKind {
     Inner, Left, Right, Full, Cross, Natural,
 }
 
+/// JOIN 連接條件
+///
+/// | 類型 | 語法 |
+/// |------|------|
+/// | On | ON expr |
+/// | Using | USING (col1, col2, ...) |
+/// | None | 無條件（只用於 CROSS JOIN） |
 #[derive(Debug, Clone, PartialEq)]
 pub enum JoinCondition {
     On(Expr),
@@ -93,56 +232,114 @@ pub enum JoinCondition {
     None,
 }
 
+/// ORDER BY 排序項
+///
+/// # 範例
+/// ```sql
+/// ORDER BY name ASC, created_at DESC
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderItem {
+    /// 排序的運算式
     pub expr: Expr,
+    /// 是否升序（true=ASC, false=DESC）
     pub asc:  bool,
 }
 
 // ── INSERT ────────────────────────────────────────────────────────────────
 
+/// INSERT 插入語句
+///
+/// # 語法
+/// ```sql
+/// INSERT INTO table (col1, col2, ...) VALUES (v1, v2, ...), ...
+/// INSERT INTO table DEFAULT VALUES
+/// INSERT INTO table ... ON CONFLICT DO NOTHING
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertStmt {
+    /// 目標表格名稱
     pub table:   String,
-    pub columns: Vec<String>,   // 空表示不指定欄位
+    /// 欄位名稱列表（空表示不指定，使用所有欄位）
+    pub columns: Vec<String>,
+    /// 要插入的值（多組用於批量插入）
     pub values:  Vec<Vec<Expr>>,
-    pub default_values: bool,  // true for INSERT DEFAULT VALUES
+    /// 是否為 DEFAULT VALUES
+    pub default_values: bool,
+    /// ON CONFLICT 處理方式
     pub on_conflict: Option<OnConflict>,
 }
 
+/// ON CONFLICT 衝突處理策略
 #[derive(Debug, Clone, PartialEq)]
 pub enum OnConflict {
+    /// DO NOTHING（忽略衝突）
     DoNothing,
+    /// DO UPDATE SET column = value（更新現有列）
     DoUpdate { column: String, value: Expr },
 }
 
 // ── UPDATE ────────────────────────────────────────────────────────────────
 
+/// UPDATE 更新語句
+///
+/// # 語法
+/// ```sql
+/// UPDATE table SET col1 = val1, col2 = val2 WHERE condition
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateStmt {
+    /// 目標表格
     pub table:   String,
+    /// 要更新的欄位與值
     pub sets:    Vec<(String, Expr)>,
+    /// WHERE 條件（可選）
     pub where_:  Option<Expr>,
 }
 
 // ── DELETE ────────────────────────────────────────────────────────────────
 
+/// DELETE 刪除語句
+///
+/// # 語法
+/// ```sql
+/// DELETE FROM table WHERE condition
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeleteStmt {
+    /// 目標表格
     pub table:  String,
+    /// WHERE 條件（可選，全刪除時為 None）
     pub where_: Option<Expr>,
 }
 
 // ── CREATE TABLE ─────────────────────────────────────────────────────────
 
+/// CREATE TABLE 建立表格語句
+///
+/// # 語法
+/// ```sql
+/// CREATE TABLE [IF NOT EXISTS] name (
+///     column1 type [constraints],
+///     column2 type [constraints],
+///     [table_constraints]
+/// )
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableStmt {
+    /// IF NOT EXISTS
     pub if_not_exists: bool,
+    /// 表格名稱
     pub name:          String,
+    /// 欄位定義列表
     pub columns:       Vec<ColumnDef>,
+    /// 表格層級約束
     pub constraints:   Vec<TableConstraint>,
 }
 
+/// 欄位定義
+///
+/// 包含欄位名稱、類型、約束
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnDef {
     pub name:        String,
@@ -150,24 +347,53 @@ pub struct ColumnDef {
     pub constraints: Vec<ColumnConstraint>,
 }
 
+/// SQL 資料類型
+///
+/// | 類型 | 說明 |
+/// |------|------|
+/// | Integer | 64 位元帶符號整數 |
+/// | Real | 64 位元浮點數 |
+/// | Text | UTF-8 字串 |
+/// | Blob | 二進位資料 |
+/// | Boolean | true/false |
+/// | Null | NULL 值 |
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlType {
     Integer, Real, Text, Blob, Boolean, Null,
 }
 
+/// 欄位層級約束
+///
+/// | 約束 | 說明 |
+/// |------|------|
+/// | NotNull | 非空 |
+/// | PrimaryKey | 主鍵 |
+/// | Unique | 唯一 |
+/// | Default(expr) | 預設值 |
+/// | Check(expr) | CHECK 約束 |
+/// | References | 外鍵參照 |
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnConstraint {
+    /// 非空約束
     NotNull,
+    /// 主鍵約束
     PrimaryKey { autoincrement: bool },
+    /// 唯一約束
     Unique,
+    /// 預設值
     Default(Expr),
+    /// CHECK 約束
     Check(Expr),
+    /// 外鍵參照
     References { table: String, column: Option<String> },
 }
 
+/// 表格層級約束
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableConstraint {
+    /// 主鍵約束（多欄位）
     PrimaryKey(Vec<String>),
+    /// 唯一約束（多欄位）
     Unique(Vec<String>),
 }
 
@@ -294,64 +520,161 @@ pub struct AnalyzeStmt {
 
 // ── 運算式 ────────────────────────────────────────────────────────────────
 
+/// 運算式（Expression）
+///
+/// 運算式是有值的語法結構，用於：
+/// - SELECT 的欄位
+/// - WHERE 條件
+/// - SET 子句
+/// - VALUES 子句
+///
+/// # 運算式類型
+///
+/// | 類型 | 範例 | 說明 |
+/// |------|------|------|
+/// | LitInt | `42` | 整數常值 |
+/// | LitFloat | `3.14` | 浮點常值 |
+/// | LitStr | `'hello'` | 字串常值 |
+/// | LitBool | `TRUE` | 布林常值 |
+/// | LitNull | `NULL` | 空值 |
+/// | Column | `name`, `t.name` | 欄位參照 |
+/// | Function | `COUNT(*)` | 函式呼叫 |
+/// | BinOp | `a + b`, `x > 5` | 二元運算 |
+/// | UnaryOp | `-x`, `NOT y` | 一元運算 |
+/// | IsNull | `x IS NULL` | 空值判斷 |
+/// | Between | `n BETWEEN 1 AND 10` | 範圍判斷 |
+/// | InList | `x IN (1, 2, 3)` | 列表成員判斷 |
+/// | Like | `name LIKE 'A%'` | 模糊匹配 |
+/// | Cast | `CAST(x AS INTEGER)` | 類型轉換 |
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    // 字面值
+    // ── 字面值 ────────────────────────────────────────────────────────────
+
+    /// 整數常值
     LitInt(i64),
+    /// 浮點數常值
     LitFloat(f64),
+    /// 字串常值（單引號包圍）
     LitStr(String),
+    /// 布林常值（TRUE / FALSE）
     LitBool(bool),
+    /// 空值
     LitNull,
 
-    // 欄位參照（可帶 table prefix）
+    // ── 欄位參照 ─────────────────────────────────────────────────────────
+
+    /// 欄位參照
+    ///
+    /// # 範例
+    /// - `name` → Column { table: None, name: "name" }
+    /// - `t.name` → Column { table: Some("t"), name: "name" }
     Column { table: Option<String>, name: String },
 
-    // 函式呼叫
+    // ── 函式 ─────────────────────────────────────────────────────────────
+
+    /// 函式呼叫
+    ///
+    /// # 範例
+    /// - `COUNT(*)` → Function { name: "COUNT", args: [*], distinct: false }
+    /// - `SUM(DISTINCT x)` → Function { name: "SUM", args: [x], distinct: true }
     Function { name: String, args: Vec<Expr>, distinct: bool },
 
-    // 二元運算
+    // ── 二元運算 ─────────────────────────────────────────────────────────
+
+    /// 二元運算（left op right）
+    ///
+    /// # 支援的運算子
+    /// - 比較：=, !=, <, <=, >, >=
+    /// - 邏輯：AND, OR
+    /// - 算術：+, -, *, /, %
+    /// - 字串：||
     BinOp { left: Box<Expr>, op: BinOp, right: Box<Expr> },
 
-    // 一元運算
+    // ── 一元運算 ─────────────────────────────────────────────────────────
+
+    /// 一元運算（op expr）
+    ///
+    /// # 支援的運算子
+    /// - Neg：負號（-x）
+    /// - Not：邏輯非（NOT x）
     UnaryOp { op: UnaryOp, expr: Box<Expr> },
 
-    // IS NULL / IS NOT NULL
+    // ── 空值判斷 ─────────────────────────────────────────────────────────
+
+    /// IS [NOT] NULL
+    ///
+    /// # 範例
+    /// - `x IS NULL` → IsNull { expr: x, negated: false }
+    /// - `x IS NOT NULL` → IsNull { expr: x, negated: true }
     IsNull  { expr: Box<Expr>, negated: bool },
 
-    // BETWEEN
+    // ── 範圍判斷 ─────────────────────────────────────────────────────────
+
+    /// BETWEEN ... AND ...
+    ///
+    /// # 範例
+    /// - `age BETWEEN 18 AND 65` → Between { expr: age, low: 18, high: 65, negated: false }
+    /// - `age NOT BETWEEN 18 AND 65` → negated: true
     Between { expr: Box<Expr>, low: Box<Expr>, high: Box<Expr>, negated: bool },
 
-    // IN (...)
+    // ── 列表成員判斷 ─────────────────────────────────────────────────────
+
+    /// IN (...) 列表判斷
+    ///
+    /// # 範例
+    /// - `id IN (1, 2, 3)` → InList { expr: id, list: [1, 2, 3], negated: false }
     InList  { expr: Box<Expr>, list: Vec<Expr>, negated: bool },
 
-    // IN (SELECT ...)
+    /// IN (SELECT ...) 子查詢
     InSubquery { expr: Box<Expr>, query: Box<SelectStmt>, negated: bool },
 
-    // EXISTS (SELECT ...)
+    /// EXISTS (SELECT ...)
     Exists { query: Box<SelectStmt>, negated: bool },
 
-    // 純量子查詢 (SELECT ...)
+    /// 純量子查詢（當作單一值使用）
     ScalarSubquery(Box<SelectStmt>),
 
-    // LIKE / GLOB
+    // ── 模糊匹配 ─────────────────────────────────────────────────────────
+
+    /// LIKE 模糊匹配
+    ///
+    /// # 範例
+    /// - `name LIKE 'A%'` → Like { expr: name, pattern: 'A%', negated: false }
     Like    { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
+
+    /// GLOB 模糊匹配（區分大小寫，使用 * 和 ?）
     Glob    { expr: Box<Expr>, pattern: Box<Expr>, negated: bool },
 
-    // 子查詢（留待後續實作）
-    Subquery(Box<SelectStmt>),
+    // ── 類型轉換 ─────────────────────────────────────────────────────────
 
-    // CAST(expr AS type)
+    /// CAST(expr AS type)
     Cast { expr: Box<Expr>, to: SqlType },
+
+    /// 子查詢（預留）
+    Subquery(Box<SelectStmt>),
 }
 
+/// 二元運算子
+///
+/// # 類別
+/// - 比較運算子：Eq, NotEq, Lt, LtEq, Gt, GtEq
+/// - 邏輯運算子：And, Or
+/// - 算術運算子：Add, Sub, Mul, Div, Mod
+/// - 字串運算子：Concat（||）
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {
-    Eq, NotEq, Lt, LtEq, Gt, GtEq,
-    And, Or,
-    Add, Sub, Mul, Div, Mod,
-    Concat,
+    Eq, NotEq, Lt, LtEq, Gt, GtEq,  // 比較
+    And, Or,                         // 邏輯
+    Add, Sub, Mul, Div, Mod,         // 算術
+    Concat,                           // 字串連接（||）
 }
 
+/// 一元運算子
+///
+/// | 運算子 | 說明 | 範例 |
+/// |--------|------|------|
+/// | Neg | 負號 | -5 |
+/// | Not | 邏輯非 | NOT x |
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
     Neg,    // -

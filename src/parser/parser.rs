@@ -1,36 +1,72 @@
 //! Parser：Token 串 → AST
+//!
+//! 使用遞迴下降解析器（Recursive Descent Parser）將 token 流轉換為抽象語法樹。
+//!
+//! ## 解析流程
+//!
+//! ```text
+//! SQL 字串 → Lexer → Token 流 → Parser → AST
+//! ```
+//!
+//! ## 設計模式
+//!
+//! 採用 Pratt Parser（表達式解析）與傳統遞迴下降（語句解析）相結合：
+//! - **語句層級**：使用遞迴下降（SELECT、INSERT 等）
+//! - **表達式層級**：使用 Pratt Parser 處理運算子優先順序
+//!
+//! ## 運算子優先順序（由低到高）
+//!
+//! 1. OR
+//! 2. AND
+//! 3. NOT
+//! 4. 比較（=, !=, <, <=, >, >=, IS, BETWEEN, IN, LIKE）
+//! 5. 加減（+, -, ||）
+//! 6. 乘除（*, /, %）
+//! 7. 一元（-, NOT）
+//! 8. 主值（literal, column, function, subquery）
 
 use super::ast::*;
 use super::lexer::Token;
 
+/// Parser 結構
+///
+/// 持有 token 陣列與目前解析位置
 pub struct Parser {
+    /// 輸入的 token 序列
     tokens: Vec<Token>,
+    /// 目前解析位置
     pos:    usize,
 }
 
 impl Parser {
+    /// 建立新的 Parser
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser { tokens, pos: 0 }
     }
 
     // ── 基本操作 ──────────────────────────────────────────────────────────
 
+    /// 查看目前 token（不移動）
     fn peek(&self) -> &Token {
         self.tokens.get(self.pos).unwrap_or(&Token::Eof)
     }
 
+    /// 查看下個 token（不移動）
     fn peek2(&self) -> &Token {
         self.tokens.get(self.pos + 1).unwrap_or(&Token::Eof)
     }
 
+    /// 取出目前 token 並移動到下一個
     fn advance(&mut self) -> Token {
         let t = self.tokens.get(self.pos).cloned().unwrap_or(Token::Eof);
         if self.pos < self.tokens.len() { self.pos += 1; }
         t
     }
 
+    /// 檢查目前 token 是否為指定類型
     fn check(&self, tok: &Token) -> bool { self.peek() == tok }
 
+    /// 吃掉指定 token，若匹配則移動並返回 Ok
     fn eat(&mut self, tok: &Token) -> Result<(), String> {
         if self.peek() == tok {
             self.advance();
@@ -40,6 +76,9 @@ impl Parser {
         }
     }
 
+    /// 吃掉一個識別符
+    ///
+    /// 允許某些關鍵字（如 TEXT、INTEGER）作為識別符使用
     fn eat_ident(&mut self) -> Result<String, String> {
         match self.advance() {
             Token::Ident(s) => Ok(s),
@@ -51,15 +90,20 @@ impl Parser {
         }
     }
 
+    /// 可選匹配：若目前 token 匹配則吃掉並返回 true
     fn maybe(&mut self, tok: &Token) -> bool {
         if self.peek() == tok { self.advance(); true } else { false }
     }
 
     // ── 頂層解析 ──────────────────────────────────────────────────────────
 
+    /// 解析多個語句（以分號分隔）
+    ///
+    /// 持續解析直到遇到 EOF
     pub fn parse(&mut self) -> Result<Vec<Statement>, String> {
         let mut stmts = Vec::new();
         while self.peek() != &Token::Eof {
+            // 吃掉可選的分號
             self.maybe(&Token::Semicolon);
             if self.peek() == &Token::Eof { break; }
             stmts.push(self.parse_statement()?);
@@ -68,6 +112,7 @@ impl Parser {
         Ok(stmts)
     }
 
+    /// 根據第一個 token 判斷語句類型並解析
     fn parse_statement(&mut self) -> Result<Statement, String> {
         match self.peek().clone() {
             Token::Select | Token::With => Ok(Statement::Select(self.parse_select()?)),
@@ -813,12 +858,28 @@ impl Parser {
         Ok(ExplainStmt { inner })
     }
 
+    // ── 運算式解析（Pratt Parser）────────────────────────────────────────────
+    //
+    // Pratt Parser 的核心思想：根據 token 的 "binding power" 決定解析方式
+    // 每個運算子有左結合性和優先順序
+    //
+    // 解析層級（由低到高）：
+    // parse_or → parse_and → parse_not → parse_comparison → ...
     // ── 運算式 (Pratt parser) ─────────────────────────────────────────────
 
+    /// 解析表達式的入口點
+    ///
+    /// 從最高優先順序開始解析（parse_or）
     fn parse_expr(&mut self) -> Result<Expr, String> {
         self.parse_or()
     }
 
+    /// 解析 OR 運算（最低優先順序）
+    ///
+    /// # 語法
+    /// ```text
+    /// expr ::= expr OR expr
+    /// ```
     fn parse_or(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_and()?;
         while self.check(&Token::Or) {
@@ -829,6 +890,7 @@ impl Parser {
         Ok(left)
     }
 
+    /// 解析 AND 運算
     fn parse_and(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_not()?;
         while self.check(&Token::And) {
@@ -839,6 +901,7 @@ impl Parser {
         Ok(left)
     }
 
+    /// 解析 NOT 運算
     fn parse_not(&mut self) -> Result<Expr, String> {
         if self.check(&Token::Not) {
             self.advance();
@@ -848,6 +911,9 @@ impl Parser {
         self.parse_comparison()
     }
 
+    /// 解析比較運算
+    ///
+    /// 包含：=, !=, <, <=, >, >=, IS, BETWEEN, IN, LIKE, GLOB
     fn parse_comparison(&mut self) -> Result<Expr, String> {
         let left = self.parse_addition()?;
 
@@ -905,6 +971,7 @@ impl Parser {
             return Ok(Expr::Glob { expr: Box::new(left), pattern: Box::new(pattern), negated: negated_glob });
         }
 
+        // 比較運算子
         let op = match self.peek() {
             Token::Eq     => BinOp::Eq,
             Token::NotEq  => BinOp::NotEq,
@@ -919,6 +986,7 @@ impl Parser {
         Ok(Expr::BinOp { left: Box::new(left), op, right: Box::new(right) })
     }
 
+    /// 解析加法/減法（+、-、||）
     fn parse_addition(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_multiplication()?;
         loop {
@@ -935,6 +1003,7 @@ impl Parser {
         Ok(left)
     }
 
+    /// 解析乘法/除法/取模（*、/、%）
     fn parse_multiplication(&mut self) -> Result<Expr, String> {
         let mut left = self.parse_unary()?;
         loop {
@@ -951,6 +1020,7 @@ impl Parser {
         Ok(left)
     }
 
+    /// 解析一元運算（負號）
     fn parse_unary(&mut self) -> Result<Expr, String> {
         if self.check(&Token::Minus) {
             self.advance();
@@ -960,17 +1030,23 @@ impl Parser {
         self.parse_primary()
     }
 
+    /// 解析基本值（literal、column、function、subquery）
+    ///
+    /// 這是 Pratt Parser 的核心：根據 token 類型直接構造 AST 節點
     fn parse_primary(&mut self) -> Result<Expr, String> {
         match self.peek().clone() {
+            // ── 字面值 ──────────────────────────────────────────────────────
             Token::LitInt(v)  => { self.advance(); Ok(Expr::LitInt(v)) }
             Token::LitFloat(v)=> { self.advance(); Ok(Expr::LitFloat(v)) }
             Token::LitStr(s)  => { self.advance(); Ok(Expr::LitStr(s)) }
             Token::LitNull    => { self.advance(); Ok(Expr::LitNull) }
             Token::True       => { self.advance(); Ok(Expr::LitBool(true)) }
             Token::False      => { self.advance(); Ok(Expr::LitBool(false)) }
+
+            // ── 括號 / 子查詢 ──────────────────────────────────────────────
             Token::LParen => {
                 self.advance();
-                // 純量子查詢 (SELECT ...)
+                // (SELECT ...) 純量子查詢
                 if self.check(&Token::Select) || self.check(&Token::With) {
                     let query = self.parse_select()?;
                     self.eat(&Token::RParen)?;
@@ -980,14 +1056,17 @@ impl Parser {
                 self.eat(&Token::RParen)?;
                 Ok(expr)
             }
+
+            // ── EXISTS (SELECT ...) ────────────────────────────────────────
             Token::Exists => {
                 self.advance();
-                let negated = false;
                 self.eat(&Token::LParen)?;
                 let query = self.parse_select()?;
                 self.eat(&Token::RParen)?;
-                Ok(Expr::Exists { query: Box::new(query), negated })
+                Ok(Expr::Exists { query: Box::new(query), negated: false })
             }
+
+            // ── CAST(expr AS type) ─────────────────────────────────────────
             Token::Cast => {
                 self.advance();
                 self.eat(&Token::LParen)?;
@@ -997,9 +1076,11 @@ impl Parser {
                 self.eat(&Token::RParen)?;
                 Ok(Expr::Cast { expr: Box::new(expr), to: sql_type })
             }
+
+            // ── 識別符（欄位或函式） ───────────────────────────────────────
             Token::Ident(name) => {
                 self.advance();
-                // function call
+                // 函式呼叫：name(...)
                 if self.check(&Token::LParen) {
                     return self.parse_function_call(name);
                 }
@@ -1009,19 +1090,29 @@ impl Parser {
                     let col = self.eat_ident()?;
                     return Ok(Expr::Column { table: Some(name), name: col });
                 }
+                // 純欄位名
                 Ok(Expr::Column { table: None, name })
             }
             t => Err(format!("unexpected token in expression: {:?}", t)),
         }
     }
 
+    /// 解析函式呼叫
+    ///
+    /// # 語法
+    /// ```text
+    /// function_call ::= name ( [DISTINCT] expr [, expr ...] )
+    ///                 | name ( * )
+    /// ```
     fn parse_function_call(&mut self, name: String) -> Result<Expr, String> {
         self.eat(&Token::LParen)?;
         let distinct = self.maybe(&Token::Distinct);
         let args = if self.check(&Token::Star) {
+            // COUNT(*) 等
             self.advance();
             vec![Expr::Column { table: None, name: "*".to_string() }]
         } else if self.check(&Token::RParen) {
+            // 無參數函式
             vec![]
         } else {
             self.parse_expr_list()?
