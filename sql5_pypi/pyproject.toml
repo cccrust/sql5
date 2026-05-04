@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sql5"
-version = "1.22.5"
+version = "1.22.6"
 description = "SQLite-compatible database with CJK FTS5 support"
 readme = "README.md"
 license = {text = "MIT"}
