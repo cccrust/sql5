@@ -84,4 +84,6 @@ jobs:
         working-directory: sql5_pypi
 
       - name: Publish to PyPI
-        run: twine upload sql5_pypi/dist/* --user __token__ --password ${{ secrets.PYPI_TOKEN }}
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: twine upload sql5_pypi/dist/* --user __token__ --password $TWINE_PASSWORD
