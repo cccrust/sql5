@@ -52,12 +52,12 @@ fi
 echo ""
 
 # ============================================
-# 3. CLI integration tests (rutest.sh)
+# 3. CLI integration tests (shtest.sh)
 # ============================================
 echo -e "${BLUE}[3/5] Running CLI integration tests...${RESET}"
 echo ""
 cd "$PROJECT_DIR"
-./rutest.sh "$BINARY" 2>&1 | tail -30
+./shtest.sh "$BINARY" 2>&1 | tail -30
 CLI_STATUS=${PIPESTATUS[0]}
 echo ""
 if [[ $CLI_STATUS -eq 0 ]]; then
@@ -136,9 +136,9 @@ else
 fi
 
 if [[ $CLI_STATUS -eq 0 ]]; then
-    echo -e "  ${GREEN}[PASS]${RESET} CLI integration tests (rutest.sh)"
+    echo -e "  ${GREEN}[PASS]${RESET} CLI integration tests (shtest.sh)"
 else
-    echo -e "  ${YELLOW}[PARTIAL]${RESET} CLI integration tests (rutest.sh)"
+    echo -e "  ${YELLOW}[PARTIAL]${RESET} CLI integration tests (shtest.sh)"
 fi
 
 if [[ $PYTEST_STATUS -eq 0 ]]; then
