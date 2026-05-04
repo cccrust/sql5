@@ -36,15 +36,11 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Rename binary
-        run: |
-          cp target/release/sql5 target/release/sql5-${{ matrix.platform }}${{ matrix.ext }}
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sql5-${{ matrix.platform }}${{ matrix.ext }}
-          path: target/release/sql5-${{ matrix.platform }}${{ matrix.ext }}
+          name: sql5-${{ matrix.platform }}
+          path: target/release/sql5
 
   upload:
     needs: build
