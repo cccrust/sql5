@@ -17,8 +17,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install package
-        run: pip install -e .
+- name: Install package
+        run: pip install -e sql5_pypi
 
-      - name: Verify installation
+    - name: Verify installation
         run: python -c "import sql5; print(sql5.__version__)"
