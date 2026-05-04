@@ -254,9 +254,16 @@ impl DiskStorage {
     }
 
     /// 關閉檔案（用於 vacuum 時）
+    #[cfg(unix)]
     pub fn close(self) -> std::io::Result<()> {
         use std::os::unix::fs::MetadataExt;
-        let fd = self.file.metadata()?.ino();
+        let _fd = self.file.metadata()?.ino();
+        drop(self);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub fn close(self) -> std::io::Result<()> {
         drop(self);
         Ok(())
     }
