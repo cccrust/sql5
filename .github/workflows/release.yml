@@ -87,3 +87,4 @@ jobs:
           user: __token__
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: sql5_pypi/dist
+          trusted-publishing: never
