@@ -78,14 +78,11 @@ jobs:
         with:
           path: artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - name: Upload all
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: |
-            artifacts/macos-arm64/sql5
-            artifacts/macos-x86_64/sql5
-            artifacts/linux-x86_64/sql5
-            artifacts/windows-x86_64/sql5.exe
+          files: artifacts/
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
