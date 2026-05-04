@@ -77,15 +77,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install build
+        run: pip install build twine
 
       - name: Build package
         run: python -m build
         working-directory: sql5_pypi
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_TOKEN }}
-          packages-dir: sql5_pypi/dist
+        run: twine upload sql5_pypi/dist/* --user __token__ --password ${{ secrets.PYPI_TOKEN }}
