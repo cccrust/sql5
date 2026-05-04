@@ -45,7 +45,7 @@ jobs:
           mv target/${{ matrix.target }}/release/sql5 target/${{ matrix.target }}/release/sql5${{ matrix.ext }}
 
       - name: Upload asset
-        uses: softprops/upload-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: target/${{ matrix.target }}/release/sql5${{ matrix.ext }}
           asset_name: sql5-${{ matrix.platform }}${{ matrix.ext }}
