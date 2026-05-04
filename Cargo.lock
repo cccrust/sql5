@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "sql5"
-version = "3.1.0"
+version = "3.1.3"
 dependencies = [
  "futures-util",
  "serde_json",

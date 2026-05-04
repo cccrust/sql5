@@ -227,6 +227,23 @@ cargo test
 ./pub.sh 2.0.1 github
 ```
 
+## Documentation
+
+Full documentation available in `src/` directory:
+
+| Module | Source | Docs |
+|--------|--------|------|
+| parser | [parser.rs](src/parser/) | [README](src/parser/README.md) |
+| planner | [planner.rs](src/planner/) | [README](src/planner/README.md) |
+| btree | [btree.rs](src/btree/) | [README](src/btree/README.md) |
+| pager | [pager.rs](src/pager/) | [README](src/pager/README.md) |
+| table | [table.rs](src/table/) | [README](src/table/README.md) |
+| catalog | [catalog.rs](src/catalog/) | [README](src/catalog/README.md) |
+| fts | [fts.rs](src/fts/) | [README](src/fts/README.md) |
+| interface | [interface.rs](src/interface/) | [README](src/interface/README.md) |
+
+Individual file documentation: each `.rs` file has a corresponding `.md` file in the same directory.
+
 ## Version History
 
 | Version | Date | Features |
