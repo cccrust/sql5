@@ -62,6 +62,28 @@ function update_version() {
     echo -e "${GREEN}版本已更新${RESET}"
 }
 
+function do_crates() {
+    local VERSION=$1
+
+    echo -e "${GREEN}=== 上傳到 crates.io (v$VERSION) ===${RESET}"
+    echo ""
+
+    echo "清理系統檔案..."
+    find . -name ".DS_Store" -delete
+
+    echo "建立 package..."
+    cargo package --allow-dirty
+
+    echo "上傳到 crates.io..."
+    cargo publish --allow-dirty
+
+    echo ""
+    echo -e "${GREEN}完成！已上傳 sql5-$VERSION 到 crates.io${RESET}"
+    echo "安裝: cargo install sql5"
+
+    cd "$PROJECT_DIR"
+}
+
 function do_pypi() {
     local VERSION=$1
 
@@ -220,19 +242,33 @@ case "$TARGET" in
     all)
         echo -e "${GREEN}=== 執行完整發布 ===${RESET}"
         echo ""
-        echo "Step 1: 上傳到 PyPI..."
+        echo "Step 1: 更新版本號..."
+        update_version "$NEW_VERSION"
+        echo ""
+        echo "Step 2: 上傳到 crates.io..."
+        do_crates "$NEW_VERSION"
+        echo ""
+        echo "Step 3: 上傳到 PyPI..."
         do_pypi "$NEW_VERSION"
         echo ""
-        echo "Step 2: 建立 GitHub Release (觸發 CI build)..."
+        echo "Step 4: 提交版本更新..."
+        git add Cargo.toml sql5_pypi/pyproject.toml sql5_pypi/sql5/__init__.py
+        git commit -m "Bump version to $NEW_VERSION"
+        echo ""
+        echo "Step 5: 推送到 GitHub..."
+        git push origin main
+        echo ""
+        echo "Step 6: 建立 GitHub Release (觸發 CI build)..."
         do_github "$NEW_VERSION"
         echo ""
         echo -e "${GREEN}完成！${RESET}"
-        echo "- PyPI: 可立即 pip install sql5==$NEW_VERSION"
+        echo "- crates.io: cargo install sql5"
+        echo "- PyPI: pip install sql5==$NEW_VERSION"
         echo "- GitHub: CI 正在 build binary，完成後會自動可下載"
         ;;
     *)
         echo -e "${RED}錯誤: 未知目標: $TARGET${RESET}"
-        echo "請使用 pypi、github 或 all"
+        echo "請使用 pypi、crates、github 或 all"
         exit 1
         ;;
 esac
