@@ -90,9 +90,6 @@ function do_pypi() {
     echo -e "${GREEN}=== 上傳到 PyPI (v$VERSION) ===${RESET}"
     echo ""
 
-    # Update version
-    update_version "$VERSION"
-
     cd "$PROJECT_DIR/sql5_pypi"
 
     echo "清理舊 build..."
