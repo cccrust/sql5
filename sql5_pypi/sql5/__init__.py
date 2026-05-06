@@ -10,7 +10,7 @@
 #       print(row)
 #   conn.close()
 
-__version__ = "3.2.6"
+__version__ = "3.2.7"
 __all__ = ["connect", "Connection", "Cursor", "Error"]
 
 from .client import connect, Connection, Cursor, Error
