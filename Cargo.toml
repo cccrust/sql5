@@ -1,7 +1,9 @@
 [package]
 name = "sql5"
-version = "3.2.7"
+version = "3.2.17"
 edition = "2024"
+description = "SQLite compatible database with CJK FTS5 full-text search"
+license = "MIT"
 
 [package.metadata]
 exclude = [".DS_Store"]
