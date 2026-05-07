@@ -70,6 +70,24 @@ impl Schema {
     pub fn len(&self) -> usize {
         self.columns.len()
     }
+
+    /// 產生 CREATE TABLE 語句
+    pub fn to_sql(&self, table_name: &str) -> String {
+        let cols: Vec<String> = self.columns.iter().map(|c| {
+            let t = match c.data_type {
+                DataType::Integer => "INTEGER",
+                DataType::Text => "TEXT",
+                DataType::Float => "FLOAT",
+                DataType::Boolean => "BOOLEAN",
+            };
+            if !c.nullable {
+                format!("{} {} NOT NULL", c.name, t)
+            } else {
+                format!("{} {}", c.name, t)
+            }
+        }).collect();
+        format!("CREATE TABLE {}({})", table_name, cols.join(", "))
+    }
 }
 
 #[cfg(test)]

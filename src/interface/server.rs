@@ -126,12 +126,18 @@ impl Server {
         match method {
             "execute" => {
                 let sql = request.get("sql")?.as_str()?;
-                // 提取參數（目前未使用，預留給預處理陳述式）
                 let params: Vec<serde_json::Value> = request.get("params")
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
                 self.execute_sql(sql, params)
+            }
+            "tables" => {
+                self.get_tables()
+            }
+            "schema" => {
+                let table = request.get("table").and_then(|v| v.as_str()).unwrap_or("");
+                self.get_schema(table)
             }
             "close" => {
                 self.close();
@@ -319,6 +325,82 @@ impl Server {
             "affected": 0
         });
         serde_json::to_string(&json).unwrap_or_else(|_| r#"{"ok":false,"error":"json error"}"#.to_string())
+    }
+
+    /// 取得所有表格名稱
+    fn get_tables(&self) -> Option<String> {
+        let locked = self.executor.lock().unwrap();
+        let names: Vec<String> = locked.catalog()
+            .table_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut result: Vec<Vec<serde_json::Value>> = names.into_iter()
+            .map(|n| vec![serde_json::Value::String(n)])
+            .collect();
+
+        let json = serde_json::json!({
+            "ok": true,
+            "columns": ["name"],
+            "rows": result,
+            "affected": 0
+        });
+        serde_json::to_string(&json).ok()
+    }
+
+    /// 取得表格結構
+    fn get_schema(&self, table: &str) -> Option<String> {
+        use crate::table::schema::DataType;
+        
+        let locked = self.executor.lock().unwrap();
+        let catalog = locked.catalog();
+        if !table.is_empty() && catalog.table_exists(table) {
+            if let Some(meta) = catalog.table_meta(table) {
+                let rows: Vec<Vec<serde_json::Value>> = meta.schema.columns.iter().map(|c| {
+                    vec![
+                        serde_json::Value::String(c.name.clone()),
+                        serde_json::Value::String(match c.data_type {
+                            DataType::Integer => "INTEGER".to_string(),
+                            DataType::Text => "TEXT".to_string(),
+                            DataType::Float => "FLOAT".to_string(),
+                            DataType::Boolean => "BOOLEAN".to_string(),
+                        }),
+                        serde_json::Value::Bool(!c.nullable),
+                    ]
+                }).collect();
+                let json = serde_json::json!({
+                    "ok": true,
+                    "columns": ["name", "type", "nullable"],
+                    "rows": rows,
+                    "affected": 0
+                });
+                return serde_json::to_string(&json).ok();
+            }
+            let json = serde_json::json!({
+                "ok": true,
+                "columns": ["name", "type", "nullable"],
+                "rows": [],
+                "affected": 0
+            });
+            return serde_json::to_string(&json).ok();
+        } else if table.is_empty() {
+            let names: Vec<String> = catalog.table_names()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            let rows: Vec<Vec<serde_json::Value>> = names.into_iter()
+                .map(|n| vec![serde_json::Value::String(n)])
+                .collect();
+            let json = serde_json::json!({
+                "ok": true,
+                "columns": ["name"],
+                "rows": rows,
+                "affected": 0
+            });
+            serde_json::to_string(&json).ok()
+        } else {
+            Some(format!(r#"{{"ok":false,"error":"table '{}' not found"}}"#, table))
+        }
     }
 
     /// 關閉伺服器，若有磁碟檔案則刷寫資料

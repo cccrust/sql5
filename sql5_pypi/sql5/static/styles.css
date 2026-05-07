@@ -1,0 +1,349 @@
+/* sql5 Web Admin Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #181825;
+    --bg-tertiary: #313244;
+    --text-primary: #cdd6f4;
+    --text-secondary: #a6adc8;
+    --accent: #89b4fa;
+    --accent-hover: #b4befe;
+    --success: #a6e3a1;
+    --error: #f38ba8;
+    --border: #45475a;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Header */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.db-path {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+
+/* Main Layout */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 220px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-section {
+    padding: 12px;
+}
+
+.sidebar-section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+}
+
+.nav-list {
+    list-style: none;
+}
+
+.nav-list li {
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 14px;
+}
+
+.nav-list li:hover {
+    background: var(--bg-tertiary);
+}
+
+.nav-list li.active {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.nav-list li.loading {
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+/* Content */
+.content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s;
+}
+
+.tab:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.tab.active {
+    background: var(--bg-tertiary);
+    color: var(--accent);
+}
+
+.tab-content {
+    display: none;
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* SQL Editor */
+.editor-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.sql-editor {
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 14px;
+    resize: vertical;
+}
+
+.sql-editor:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.sql-editor::placeholder {
+    color: var(--text-secondary);
+}
+
+.editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.btn:hover {
+    background: var(--border);
+}
+
+.btn.primary {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.btn.primary:hover {
+    background: var(--accent-hover);
+}
+
+/* Results */
+.results {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.placeholder {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+/* Table */
+.table-container {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+tr:hover {
+    background: var(--bg-tertiary);
+}
+
+td {
+    font-size: 14px;
+}
+
+/* Results Info */
+.results-info {
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+/* Error */
+.error {
+    padding: 12px;
+    background: rgba(243, 139, 168, 0.1);
+    border: 1px solid var(--error);
+    border-radius: 6px;
+    color: var(--error);
+}
+
+/* Structure Panel */
+.structure-info {
+    padding: 12px;
+}
+
+.table-columns {
+    margin-bottom: 16px;
+}
+
+.table-columns h4 {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.column-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.column-name {
+    font-weight: 500;
+    min-width: 120px;
+}
+
+.column-type {
+    color: var(--accent);
+    font-size: 13px;
+}
+
+.column-pk {
+    font-size: 11px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+/* Loading */
+.loading {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}

@@ -123,6 +123,11 @@ impl<S: Storage> Catalog<S> {
         self.cache.keys().map(|s| s.as_str()).collect()
     }
 
+    /// 取得資料表元資料
+    pub fn table_meta(&self, name: &str) -> Option<&TableMeta> {
+        self.cache.get(name)
+    }
+
     /// 資料表是否存在
     pub fn table_exists(&self, name: &str) -> bool {
         self.cache.contains_key(name)

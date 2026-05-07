@@ -125,6 +125,10 @@ class Connection:
         """
         sql_with_params = self._substitute_params(sql, params)
         request = {"method": "execute", "sql": sql_with_params}
+        return self._send_request(request)
+
+    def _send_request(self, request: dict) -> Cursor:
+        """發送請求到 server 並返回結果"""
         self._process.stdin.write(json.dumps(request) + "\n")
         self._process.stdin.flush()
 
@@ -135,6 +139,14 @@ class Connection:
 
         data = json.loads(line)
         return Cursor(data)
+
+    def tables(self) -> Cursor:
+        """取得所有表格名稱"""
+        return self._send_request({"method": "tables"})
+
+    def schema(self, table: str = "") -> Cursor:
+        """取得表格結構"""
+        return self._send_request({"method": "schema", "table": table})
 
     def _substitute_params(self, sql: str, params: tuple) -> str:
         """
