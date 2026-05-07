@@ -306,9 +306,8 @@ impl DiskStorage {
         self.page_count = u32::from_le_bytes(hdr[12..16].try_into().unwrap()) as usize;
         let cat_root = u32::from_le_bytes(hdr[16..20].try_into().unwrap()) as usize;
         
-        // Always read catalog_root - if it was set (non-zero), use it
-        // Only None if never set (cat_root = 0 and page_count = 0)
-        self.catalog_root = if cat_root > 0 || self.page_count > 0 {
+        // Only set catalog_root if cat_root > 0 (page 0 is never valid for catalog)
+        self.catalog_root = if cat_root > 0 {
             Some(cat_root)
         } else {
             None

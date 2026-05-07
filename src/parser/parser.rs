@@ -478,7 +478,7 @@ impl Parser {
                 Token::Primary => {
                     self.advance();
                     self.eat(&Token::Key)?;
-                    let autoincrement = matches!(self.peek(), Token::Ident(s) if s.eq_ignore_ascii_case("AUTOINCREMENT"));
+                    let autoincrement = matches!(self.peek(), Token::AutoIncrement);
                     if autoincrement { self.advance(); }
                     cons.push(ColumnConstraint::PrimaryKey { autoincrement });
                 }
