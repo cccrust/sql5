@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sql5"
-version = "3.2.18"
+version = "3.4.0"
 description = "SQLite-compatible database with CJK FTS5 support"
 readme = "README.md"
 license = {text = "MIT"}
@@ -28,16 +28,9 @@ classifiers = [
 ]
 dependencies = ["websocket-client>=1.0.0"]
 
-[project.scripts]
-sql5 = "sql5.__main__:main"
-
-[project.urls]
-Homepage = "https://github.com/cccrust/sql5"
-Documentation = "https://github.com/cccrust/sql5#readme"
-Repository = "https://github.com/cccrust/sql5"
-
 [project.optional-dependencies]
 dev = ["build", "twine"]
+web = ["fastapi>=0.100.0", "uvicorn>=0.23.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]

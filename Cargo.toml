@@ -1,6 +1,6 @@
 [package]
 name = "sql5"
-version = "3.2.18"
+version = "3.4.0"
 edition = "2024"
 description = "SQLite compatible database with CJK FTS5 full-text search"
 license = "MIT"
