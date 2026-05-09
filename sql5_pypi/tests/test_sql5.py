@@ -420,11 +420,9 @@ class TestAggregates:
         db.execute("INSERT INTO minmax_test VALUES (10)")
         db.execute("INSERT INTO minmax_test VALUES (20)")
         cursor = db.execute("SELECT MIN(val), MAX(val) FROM minmax_test")
-        row = cursor.fetchone()
-        assert row == [10, 30]
+        assert cursor.fetchone() == [10, 30]
 
-
-# ============================================================================
+    # ============================================================================
 # JOIN 測試
 # ============================================================================
 

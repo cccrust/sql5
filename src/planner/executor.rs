@@ -404,7 +404,7 @@ impl Executor {
                 groups.push((key, vec![row]));
             }
         }
-        if groups.is_empty() {
+        if groups.is_empty() && group_by.is_empty() {
             let all_rows: Vec<Row> = all_src_rows.into_iter().map(Row::new).collect();
             groups.push((vec![], all_rows));
         }
@@ -1971,6 +1971,19 @@ mod tests {
         let r = run(&mut e, "SELECT MAX(age), MIN(age) FROM users");
         assert_eq!(r.rows[0][0], Value::Integer(35));
         assert_eq!(r.rows[0][1], Value::Integer(25));
+    }
+
+    #[test]
+    fn select_max_empty_group() {
+        let mut e = setup();
+        // GROUP BY + empty matches -> 0 rows
+        let r = run(&mut e, "SELECT MAX(age) FROM users WHERE age > 100 GROUP BY name");
+        assert_eq!(r.row_count(), 0);
+        
+        // NO GROUP BY + empty matches -> 1 row with NULL
+        let r2 = run(&mut e, "SELECT MAX(age) FROM users WHERE age > 100");
+        assert_eq!(r2.row_count(), 1);
+        assert_eq!(r2.rows[0][0], Value::Null);
     }
 
     #[test]
