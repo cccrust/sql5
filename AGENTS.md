@@ -145,14 +145,17 @@ sql5/
 ├── sql5_pypi/            # Python package
 │   ├── sql5/             # Python module
 │   ├── tests/            # pytest tests
+│   │   ├── test_sql5.py           # 26 tests
+│   │   └── test_compare_sqlite.py # 22 tests (sqlite API compatibility)
 │   └── _bak/             # 備份檔案
-├── _doc/                 # 版本文件
+├── _doc/                 # 版本文件 (v3.7, v3.0, ...)
 ├── _bak/                 # 備份 (test.sh, test.py, server.sh)
 ├── Cargo.toml
 ├── test.sh               # 全部測試 (主要指令)
-├── rutest.sh             # CLI 整合測試
+├── shtest.sh             # CLI 整合測試 (114 tests)
 ├── pytest.sh             # Python pytest
 ├── pub.sh                # 發布腳本 (pypi/github)
+└── sql5web.sh            # WebSocket 測試
 ```
 
 ## 備份檔案 (_bak/)
