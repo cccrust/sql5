@@ -366,7 +366,7 @@ impl Repl {
             row
         }).collect();
 
-        Ok(ResultSet { columns: out_cols, rows })
+        Ok(ResultSet { columns: out_cols, rows, affected: 0, lastrowid: None })
     }
 
     // ── Banner & Help ────────────────────────────────────────────────────
@@ -623,6 +623,8 @@ mod tests {
                 vec![Value::Integer(1), Value::Text("Alice".into())],
                 vec![Value::Integer(2), Value::Text("Bob".into())],
             ],
+            affected: 0,
+            lastrowid: None,
         };
         print_result_set(&rs);
     }

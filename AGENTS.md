@@ -1,7 +1,7 @@
 # AGENTS.md - sql5 開發規範
 
 ## 專案資訊
-- **專案**: sql5 v2.0.0 (SQLite 相容資料庫，含 CJK FTS5 全文檢索)
+- **專案**: sql5 v3.7.0 (SQLite 相容資料庫，含 CJK FTS5 全文檢索)
 - **Edition**: Rust 2024 (需要 nightly 或近期 stable)
 - **架構**: Client-Server 模式 (Python client + Rust server)
 
@@ -24,27 +24,30 @@ cargo build --release
 | `cargo build` | 編譯 debug 版 (target/debug/sql5) |
 | `cargo build --release` | 編譯 release 版 (target/release/sql5) |
 | `cargo check` | 型別檢查 (不編譯) |
-| `cargo test` | 執行所有單元測試 (205 tests) |
+| `cargo test` | 執行所有單元測試 (353 tests) |
 | `./test.sh` | **執行全部測試** (Rust + CLI + Python) |
-| `./rutest.sh` | CLI 整合測試 (113 tests) |
-| `./pytest.sh` | Python client 整合測試 |
+| `./shtest.sh` | CLI 整合測試 (114 tests) |
 | `./pub.sh <version> pypi` | 上傳到 PyPI（自動更新版本號） |
 | `./pub.sh <version> github` | 建立 GitHub tag 觸發 CI 發布（自動更新版本號） |
 
 ## 測試說明
 
 ### test.sh (全部測試)
-執行四個階段：
+執行六個階段：
 1. **Build** - 編譯 Rust release binary
-2. **Rust unit tests** - `cargo test` (205 tests)
-3. **CLI integration tests** - `./rutest.sh` (113 tests)
-4. **Python pytest** - pytest (26 tests, 5 skipped)
+2. **Rust unit tests** - `cargo test` (353 tests)
+3. **CLI integration tests** - `./shtest.sh` (114 tests)
+4. **Python pytest** - pytest (48 tests, 5 skipped)
+5. **Python client test** - sql5test.py
+6. **WebSocket test** - websocket_test.py
 
 ### 測試結果
 ```
-[PASS] Rust unit tests (cargo test)      — 205 passed
-[PASS] CLI integration tests (rutest.sh) — 113 passed
-[PASS] Python pytest tests               — 26 passed, 5 skipped
+[PASS] Rust unit tests (cargo test)      — 353 passed
+[PASS] CLI integration tests (shtest.sh) — 114 passed
+[PASS] Python pytest tests               — 48 passed, 5 skipped
+[PASS] Python client test (subprocess)    — PASSED
+[PASS] WebSocket test (v3.0)             — PASSED
 ```
 
 ## 專案架構
@@ -85,7 +88,8 @@ sql5_pypi/
 │   ├── _binary.py       # Binary 下載
 │   └── __main__.py
 ├── tests/
-│   └── test_sql5.py     # pytest 測試 (31 tests)
+│   ├── test_sql5.py     # pytest 測試 (26 tests)
+│   └── test_compare_sqlite.py  # sqlite3 API 相容性測試 (22 tests)
 └── dist/                # PyPI 發布目錄
 ```
 
@@ -93,7 +97,7 @@ sql5_pypi/
 ```bash
 cd sql5_pypi
 export SQL5_BINARY=../../target/release/sql5
-python -m pytest tests/test_sql5.py -v
+python -m pytest tests/ -v
 ```
 
 ## v2.0 Client-Server Protocol
@@ -105,7 +109,7 @@ Server 透過 stdin/stdout 接收/輸出 JSON：
 {"method": "execute", "sql": "SELECT 1"}
 
 // Response
-{"ok": true, "columns": ["1"], "rows": [[1]], "affected": 0}
+{"ok": true, "columns": ["1"], "rows": [[1]], "affected": 0, "lastrowid": null}
 ```
 
 ## REPL 用法

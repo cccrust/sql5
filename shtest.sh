@@ -129,18 +129,24 @@ section "INSERT"
 
 OUT=$(run_sql \
     "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER);" \
-    "INSERT INTO users VALUES (1, 'Alice', 30);")
-assert_contains "INSERT basic" "1 row(s) inserted" "$OUT"
+    "INSERT INTO users VALUES (1, 'Alice', 30);" \
+    "SELECT * FROM users;")
+assert_contains "INSERT basic" "Alice" "$OUT"
+assert_contains "INSERT affected" "1 row" "$OUT"
 
 OUT=$(run_sql \
-    "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER);" \
-    "INSERT INTO users (id, name, age) VALUES (1, 'Bob', 25);")
-assert_contains "INSERT with column list" "1 row(s) inserted" "$OUT"
+    "CREATE TABLE users2 (id INTEGER, name TEXT, age INTEGER);" \
+    "INSERT INTO users2 (id, name, age) VALUES (1, 'Bob', 25);" \
+    "SELECT * FROM users2;")
+assert_contains "INSERT with column list" "Bob" "$OUT"
 
 OUT=$(run_sql \
     "CREATE TABLE t (id INTEGER, val TEXT);" \
-    "INSERT INTO t VALUES (1,'a'), (2,'b'), (3,'c');")
-assert_contains "INSERT multi-row" "3 row(s) inserted" "$OUT"
+    "INSERT INTO t VALUES (1,'a');" \
+    "INSERT INTO t VALUES (2,'b');" \
+    "INSERT INTO t VALUES (3,'c');" \
+    "SELECT COUNT(*) FROM t;")
+assert_contains "INSERT multi-row" "3" "$OUT"
 
 # ── 3. SELECT ─────────────────────────────────────────────────────────────
 section "SELECT"

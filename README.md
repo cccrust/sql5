@@ -248,6 +248,7 @@ Individual file documentation: each `.rs` file has a corresponding `.md` file in
 
 | Version | Date | Features |
 |---------|------|----------|
+| v3.7.0 | 2026-05-10 | SQLite API compatibility (affected, lastrowid, description, rowcount) |
 | v3.0.0 | 2026-05-04 | WebSocket server (multi-client support) |
 | v2.4.2 | 2026-05-04 | CI/CD improvements, separate platform builds |
 | v2.0.0 | 2026-05-04 | Client-server architecture |

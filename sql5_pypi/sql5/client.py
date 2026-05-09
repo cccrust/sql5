@@ -46,6 +46,14 @@ class Cursor:
         self.columns = data.get("columns", [])
         self.rows = data.get("rows", [])
         self.affected = data.get("affected", 0)
+        self.lastrowid = data.get("lastrowid")
+
+        if self.columns:
+            self.description = tuple((name, None, None, None, None, None, None) for name in self.columns)
+            self.rowcount = -1
+        else:
+            self.description = None
+            self.rowcount = self.affected if self.affected > 0 else -1
 
     def fetchone(self):
         """取回下一列，若無更多則返回 None"""
@@ -59,6 +67,11 @@ class Cursor:
 
     def __iter__(self):
         return iter(self.rows)
+
+    @property
+    def arraysize(self):
+        """DB-API 2.0: 返回 fetchmany 的預設大小"""
+        return 1
 
 # ============================================================================
 # Connection（subprocess 模式）
@@ -86,7 +99,7 @@ class Connection:
         """啟動 Rust server 子程序"""
         binary_path = self._find_binary()
         args = [binary_path, "--server"]
-        if self.path:
+        if self.path and self.path != ":memory:":
             args.append(self.path)
 
         # 啟動子程序，設定文字模式緩衝
@@ -129,15 +142,16 @@ class Connection:
 
     def _send_request(self, request: dict) -> Cursor:
         """發送請求到 server 並返回結果"""
-        self._process.stdin.write(json.dumps(request) + "\n")
-        self._process.stdin.flush()
+        json_bytes = (json.dumps(request) + "\n").encode('utf-8')
+        self._process.stdin.buffer.write(json_bytes)
+        self._process.stdin.buffer.flush()
 
-        line = self._process.stdout.readline()
-        if not line:
+        line_bytes = self._process.stdout.buffer.readline()
+        if not line_bytes:
             stderr = self._process.stderr.read()
             raise Error(f"伺服器錯誤：{stderr}")
 
-        data = json.loads(line)
+        data = json.loads(line_bytes.decode('utf-8'))
         return Cursor(data)
 
     def tables(self) -> Cursor:

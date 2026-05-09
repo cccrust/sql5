@@ -69,12 +69,18 @@ fn main() {
         // 解析資料庫路徑（--server 後的第一個參數）
         let db_path = args.iter().skip_while(|s| *s != "--server").nth(1);
         let mut server = if let Some(path) = db_path {
-            eprintln!("啟動 stdio 伺服器，資料庫：{}", path);
-            match Server::open(&path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("無法開啟資料庫：{}", e);
-                    std::process::exit(1);
+            // :memory: 視為記憶體模式，不建立磁碟檔案
+            if path == ":memory:" {
+                eprintln!("啟動 stdio 伺服器（記憶體模式）");
+                Server::new()
+            } else {
+                eprintln!("啟動 stdio 伺服器，資料庫：{}", path);
+                match Server::open(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("無法開啟資料庫：{}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         } else {

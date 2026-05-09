@@ -190,11 +190,13 @@ impl Server {
             row.iter().map(|v| value_to_json(v)).collect()
         }).collect();
 
+        let lastrowid = rs.lastrowid.map(|n| serde_json::Value::Number(n.into()));
         let json = serde_json::json!({
             "ok": true,
             "columns": columns,
             "rows": rows,
-            "affected": 0
+            "affected": rs.affected,
+            "lastrowid": lastrowid,
         });
         serde_json::to_string(&json).unwrap_or_else(|_| r#"{"ok":false,"error":"json serialization error"}"#.to_string())
     }
@@ -292,7 +294,7 @@ impl Server {
 
         if let Some(tbl) = self.fts_tables.lock().unwrap().get_mut(table_name) {
             tbl.insert(values);
-            format!(r#"{{"ok":true,"columns":[],"rows":[],"affected":1}}"#)
+            format!(r#"{{"ok":true,"columns":[],"rows":[],"affected":1,"lastrowid":null}}"#)
         } else {
             format!(r#"{{"ok":false,"error":"table '{}' not found"}}"#, table_name)
         }
@@ -308,21 +310,18 @@ impl Server {
         let results = tbl.search(query);
         let col_names = tbl.columns.clone();
 
-        // 輸出欄位：rowid, score, 原始欄位
-        let mut out_cols = vec!["rowid".to_string(), "score".to_string()];
-        out_cols.extend(col_names);
-
-        let rows: Vec<Vec<serde_json::Value>> = results.into_iter().map(|(rowid, score, vals)| {
-            let mut row = vec![serde_json::Value::Number(rowid.into()), serde_json::Number::from_f64(score).map(|n| serde_json::Value::Number(n)).unwrap_or(serde_json::Value::Null)];
-            row.extend(vals.into_iter().map(|v| serde_json::Value::String(v)));
-            row
+        // 輸出欄位：與原始 FTS 表格一致（與 sqlite 相同）
+        // rowid 和 score 僅在明確 SELECT rowid, score 時包含
+        let rows: Vec<Vec<serde_json::Value>> = results.into_iter().map(|(_, _, vals)| {
+            vals.into_iter().map(|v| serde_json::Value::String(v)).collect()
         }).collect();
 
         let json = serde_json::json!({
             "ok": true,
-            "columns": out_cols,
+            "columns": col_names,
             "rows": rows,
-            "affected": 0
+            "affected": 0,
+            "lastrowid": null
         });
         serde_json::to_string(&json).unwrap_or_else(|_| r#"{"ok":false,"error":"json error"}"#.to_string())
     }
@@ -343,7 +342,8 @@ impl Server {
             "ok": true,
             "columns": ["name"],
             "rows": result,
-            "affected": 0
+            "affected": 0,
+            "lastrowid": null
         });
         serde_json::to_string(&json).ok()
     }
@@ -351,7 +351,7 @@ impl Server {
     /// 取得表格結構
     fn get_schema(&self, table: &str) -> Option<String> {
         use crate::table::schema::DataType;
-        
+
         let locked = self.executor.lock().unwrap();
         let catalog = locked.catalog();
         if !table.is_empty() && catalog.table_exists(table) {
@@ -372,7 +372,8 @@ impl Server {
                     "ok": true,
                     "columns": ["name", "type", "nullable"],
                     "rows": rows,
-                    "affected": 0
+                    "affected": 0,
+                    "lastrowid": null
                 });
                 return serde_json::to_string(&json).ok();
             }
@@ -380,7 +381,8 @@ impl Server {
                 "ok": true,
                 "columns": ["name", "type", "nullable"],
                 "rows": [],
-                "affected": 0
+                "affected": 0,
+                "lastrowid": null
             });
             return serde_json::to_string(&json).ok();
         } else if table.is_empty() {
@@ -395,7 +397,8 @@ impl Server {
                 "ok": true,
                 "columns": ["name"],
                 "rows": rows,
-                "affected": 0
+                "affected": 0,
+                "lastrowid": null
             });
             serde_json::to_string(&json).ok()
         } else {

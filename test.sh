@@ -23,14 +23,12 @@ echo ""
 # ============================================
 # 1. Build Rust binary
 # ============================================
-echo -e "${BLUE}[1/5] Building Rust binary...${RESET}"
+echo -e "${BLUE}[1/6] Building Rust binary...${RESET}"
+echo "  Building release binary..."
+cd "$PROJECT_DIR" && cargo build --release
 if [[ ! -x "$BINARY" ]]; then
-    echo "  Building release binary..."
-    cd "$PROJECT_DIR" && cargo build --release
-    if [[ ! -x "$BINARY" ]]; then
-        echo -e "${RED}ERROR: Build failed${RESET}"
-        exit 1
-    fi
+    echo -e "${RED}ERROR: Build failed${RESET}"
+    exit 1
 fi
 echo -e "  ${GREEN}Binary: $BINARY${RESET}"
 echo ""
@@ -54,11 +52,18 @@ echo ""
 # ============================================
 # 3. CLI integration tests (shtest.sh)
 # ============================================
-echo -e "${BLUE}[3/5] Running CLI integration tests...${RESET}"
+echo -e "${BLUE}[3/6] Running CLI integration tests...${RESET}"
 echo ""
 cd "$PROJECT_DIR"
-./shtest.sh "$BINARY" 2>&1 | tail -30
-CLI_STATUS=${PIPESTATUS[0]}
+SHTEST_OUTPUT=$(./shtest.sh "$BINARY" 2>&1)
+echo "$SHTEST_OUTPUT" | tail -30
+FAIL_COUNT=$(echo "$SHTEST_OUTPUT" | grep -c "^FAIL" || echo "0")
+CLI_STATUS=0
+if [[ $FAIL_COUNT -gt 0 ]]; then
+    CLI_STATUS=1
+elif echo "$SHTEST_OUTPUT" | grep -q "[1-9] failed"; then
+    CLI_STATUS=1
+fi
 echo ""
 if [[ $CLI_STATUS -eq 0 ]]; then
     echo -e "  ${GREEN}CLI integration tests: PASSED${RESET}"
@@ -68,14 +73,14 @@ fi
 echo ""
 
 # ============================================
-# 4. Python pytest tests
+# 4. Python pytest tests (all files in tests/)
 # ============================================
 echo -e "${BLUE}[4/5] Running Python pytest tests...${RESET}"
 echo ""
 export SQL5_BINARY="$BINARY"
-export PYTHONPATH="${PROJECT_DIR/sql5_pypi}:${PYTHONPATH:-}"
 cd "$PROJECT_DIR/sql5_pypi"
-python3 -m pytest tests/test_sql5.py -v 2>&1 | tail -20
+export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
+python3 -m pytest tests/ -v 2>&1 | tail -30
 PYTEST_STATUS=$?
 echo ""
 if [[ $PYTEST_STATUS -eq 0 ]]; then
@@ -88,7 +93,7 @@ echo ""
 # ============================================
 # 5. Python client integration test (sql5test.py)
 # ============================================
-echo -e "${BLUE}[5/5] Running Python client test...${RESET}"
+echo -e "${BLUE}[5/6] Running Python client test...${RESET}"
 echo ""
 cd "$PROJECT_DIR/sql5_pypi/examples"
 rm -f mydb.db

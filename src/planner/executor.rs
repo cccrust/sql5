@@ -55,12 +55,18 @@ use super::planner::Planner;
 /// 包含：
 /// - columns：欄位名稱列表
 /// - rows：查詢結果（二維向量）
+/// - affected：受影響的行數（DML）
+/// - lastrowid：最後插入行的 ID（AUTOINCREMENT）
 #[derive(Debug, Default, Clone)]
 pub struct ResultSet {
     /// 欄位名稱
     pub columns: Vec<String>,
     /// 查詢結果列
     pub rows:    Vec<Vec<Value>>,
+    /// 受影響的行數（INSERT/UPDATE/DELETE）
+    pub affected: i64,
+    /// 最後插入行的 ID（AUTOINCREMENT）
+    pub lastrowid: Option<i64>,
 }
 
 impl ResultSet {
@@ -72,6 +78,18 @@ impl ResultSet {
         ResultSet {
             columns: vec!["result".into()],
             rows:    vec![vec![Value::Text(msg.into())]],
+            affected: 0,
+            lastrowid: None,
+        }
+    }
+
+    /// DML 結果集（無回傳資料，但有受影響行數和 lastrowid）
+    pub fn dml(count: i64, lastrowid: Option<i64>) -> Self {
+        ResultSet {
+            columns: vec![],
+            rows:    vec![],
+            affected: count,
+            lastrowid,
         }
     }
 
@@ -243,7 +261,7 @@ impl Executor {
     fn exec_seq_scan(&mut self, table: &str, filter: Option<Expr>) -> Result<ResultSet, String> {
         // 無 FROM 的 SELECT（dual 虛擬表）：回傳一列空 row 讓 projection 求值
         if table == "__dual__" {
-            return Ok(ResultSet { columns: vec![], rows: vec![vec![]] });
+            return Ok(ResultSet { columns: vec![], rows: vec![vec![]], affected: 0, lastrowid: None });
         }
         // CTE 虛擬表優先
         if let Some(rs) = self.cte_cache.get(table).cloned() {
@@ -255,7 +273,7 @@ impl Executor {
                     None => true,
                 })
                 .collect();
-            return Ok(ResultSet { columns: col_names, rows });
+            return Ok(ResultSet { columns: col_names, rows, affected: 0, lastrowid: None });
         }
         // sqlite_master 虛擬表
         if table == "sqlite_master" || table == "sqlite_master_mview" {
@@ -268,7 +286,7 @@ impl Executor {
                     None => true,
                 })
                 .collect();
-            return Ok(ResultSet { columns, rows });
+            return Ok(ResultSet { columns, rows, affected: 0, lastrowid: None });
         }
         let col_names = self.col_names(table)?;
         // 先 resolve 子查詢（需要在掃描前執行，且需要 &mut self）
@@ -287,7 +305,7 @@ impl Executor {
             .map(|r| r.values)
             .collect();
 
-        Ok(ResultSet { columns: col_names, rows })
+        Ok(ResultSet { columns: col_names, rows, affected: 0, lastrowid: None })
     }
 
     fn exec_index_scan(&mut self, table: &str, _col: &str, value: Expr) -> Result<ResultSet, String> {
@@ -295,7 +313,7 @@ impl Executor {
         let key = expr_to_key(&value)?;
         let tbl = self.get_table(table)?;
         let rows = tbl.get(&key).map(|r| vec![r.values]).unwrap_or_default();
-        Ok(ResultSet { columns: col_names, rows })
+        Ok(ResultSet { columns: col_names, rows, affected: 0, lastrowid: None })
     }
 
     // ── 關聯代數 ──────────────────────────────────────────────────────────
@@ -332,7 +350,7 @@ impl Executor {
             }
             out_rows.push(vals);
         }
-        Ok(ResultSet { columns: out_cols, rows: out_rows })
+        Ok(ResultSet { columns: out_cols, rows: out_rows, affected: 0, lastrowid: None })
     }
 
     fn exec_filter(&mut self, input: Plan, expr: Expr) -> Result<ResultSet, String> {
@@ -345,7 +363,7 @@ impl Executor {
                 eval_expr(&resolved, &row, &src.columns).map(|v| is_truthy(&v)).unwrap_or(false)
             })
             .collect();
-        Ok(ResultSet { columns: src.columns, rows })
+        Ok(ResultSet { columns: src.columns, rows, affected: 0, lastrowid: None })
     }
 
     fn exec_sort(&mut self, input: Plan, keys: Vec<crate::parser::ast::OrderItem>) -> Result<ResultSet, String> {
@@ -370,7 +388,7 @@ impl Executor {
             .skip(offset as usize)
             .take(limit.unwrap_or(u64::MAX) as usize)
             .collect();
-        Ok(ResultSet { columns: src.columns, rows })
+        Ok(ResultSet { columns: src.columns, rows, affected: 0, lastrowid: None })
     }
 
     fn exec_distinct(&mut self, input: Plan) -> Result<ResultSet, String> {
@@ -379,7 +397,7 @@ impl Executor {
         let rows = src.rows.into_iter()
             .filter(|r| seen.insert(r.iter().map(|v| format!("{:?}", v)).collect::<Vec<_>>().join(",")))
             .collect();
-        Ok(ResultSet { columns: src.columns, rows })
+        Ok(ResultSet { columns: src.columns, rows, affected: 0, lastrowid: None })
     }
 
     fn exec_aggregate(
@@ -428,7 +446,7 @@ impl Executor {
             }
             out_rows.push(rv);
         }
-        Ok(ResultSet { columns: out_cols, rows: out_rows })
+        Ok(ResultSet { columns: out_cols, rows: out_rows, affected: 0, lastrowid: None })
     }
 
     fn exec_join(
@@ -457,7 +475,7 @@ impl Executor {
                 rows.push(combined);
             }
         }
-        Ok(ResultSet { columns: cols, rows })
+        Ok(ResultSet { columns: cols, rows, affected: 0, lastrowid: None })
     }
 
     // ── DML ───────────────────────────────────────────────────────────────
@@ -467,11 +485,14 @@ impl Executor {
             .ok_or_else(|| format!("table '{}' not found", table))?.clone();
 
         let InsertSource::Values(all_values) = source;
-        let count = if default_values { 1 } else { all_values.len() };
+        let count = if default_values { 1 } else { all_values.len() as i64 };
 
         // 檢查是否有 AUTOINCREMENT 欄位
         let autoinc_col_idx = meta.schema.columns.iter()
             .position(|c| c.autoinc);
+
+        // 追蹤最後產生的 AUTOINCREMENT 值
+        let mut last_autoinc: Option<i64> = None;
 
         for value_exprs in all_values {
             // INSERT DEFAULT VALUES - 使用 schema 中的預設值
@@ -501,6 +522,7 @@ impl Executor {
                 if need_autoinc {
                     meta.autoinc_last += 1;
                     autoinc_value = Some(meta.autoinc_last as i64);
+                    last_autoinc = autoinc_value;
                 }
             }
 
@@ -622,7 +644,7 @@ impl Executor {
         let new_count = self.tables[&table].len();
         self.catalog.update_table_meta_full(&table, root, new_count, Some(meta.autoinc_last))?;
 
-        Ok(ResultSet::ok_msg(&format!("{} row(s) inserted", count)))
+        Ok(ResultSet::dml(count, last_autoinc))
     }
 
     fn exec_update(&mut self, table: String, input: Plan, sets: Vec<(String, Expr)>) -> Result<ResultSet, String> {
@@ -648,7 +670,7 @@ impl Executor {
             tbl.insert(new_row.clone())?;
             self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Update(None), Some(&new_row), Some(&old))?;
         }
-        Ok(ResultSet::ok_msg(&format!("{} row(s) updated", count)))
+        Ok(ResultSet::dml(count as i64, None))
     }
 
     fn exec_delete(&mut self, table: String, input: Plan) -> Result<ResultSet, String> {
@@ -661,7 +683,7 @@ impl Executor {
             self.get_table(&table)?.delete(&key);
             self.fire_triggers(&table, crate::parser::ast::TriggerEvent::Delete, None, Some(&old))?;
         }
-        Ok(ResultSet::ok_msg(&format!("{} row(s) deleted", count)))
+        Ok(ResultSet::dml(count as i64, None))
     }
 
     // ── DDL ───────────────────────────────────────────────────────────────
@@ -1090,7 +1112,7 @@ impl Executor {
                 if value.is_some() {
                     return Err("PRAGMA journal_mode cannot be set".to_string());
                 }
-                Ok(ResultSet { columns: vec!["journal_mode".into()], rows: vec![vec![Value::Text(mode.into())]] })
+                Ok(ResultSet { columns: vec!["journal_mode".into()], rows: vec![vec![Value::Text(mode.into())]], affected: 0, lastrowid: None })
             }
             "cache_size" => {
                 let size = if let Some(expr) = value {
@@ -1104,15 +1126,15 @@ impl Executor {
                 } else {
                     self.cache_size as i64
                 };
-                Ok(ResultSet { columns: vec!["cache_size".into()], rows: vec![vec![Value::Integer(size)]] })
+                Ok(ResultSet { columns: vec!["cache_size".into()], rows: vec![vec![Value::Integer(size)]], affected: 0, lastrowid: None })
             }
             "page_size" => {
                 let size = storage.page_size();
-                Ok(ResultSet { columns: vec!["page_size".into()], rows: vec![vec![Value::Integer(size as i64)]] })
+                Ok(ResultSet { columns: vec!["page_size".into()], rows: vec![vec![Value::Integer(size as i64)]], affected: 0, lastrowid: None })
             }
             "freelist_count" => {
                 let count = storage.freelist_count();
-                Ok(ResultSet { columns: vec!["freelist_count".into()], rows: vec![vec![Value::Integer(count as i64)]] })
+                Ok(ResultSet { columns: vec!["freelist_count".into()], rows: vec![vec![Value::Integer(count as i64)]], affected: 0, lastrowid: None })
             }
             "table_info" => {
                 if let Some(expr) = value {
@@ -1139,7 +1161,7 @@ impl Executor {
                                 ]
                             })
                             .collect();
-                        Ok(ResultSet { columns, rows })
+                        Ok(ResultSet { columns, rows, affected: 0, lastrowid: None })
                     } else {
                         Err("table_info requires a table name".to_string())
                     }
@@ -1165,7 +1187,7 @@ impl Executor {
                                 ]);
                             }
                         }
-                        Ok(ResultSet { columns, rows })
+                        Ok(ResultSet { columns, rows, affected: 0, lastrowid: None })
                     } else {
                         Err("index_list requires a table name".to_string())
                     }
@@ -1191,7 +1213,7 @@ impl Executor {
                                     ]
                                 })
                                 .collect();
-                            Ok(ResultSet { columns, rows })
+                            Ok(ResultSet { columns, rows, affected: 0, lastrowid: None })
                         } else {
                             Err(format!("no such index: {}", index_name))
                         }
@@ -1211,6 +1233,8 @@ impl Executor {
         Ok(ResultSet {
             columns: vec!["plan".into()],
             rows: vec![vec![Value::Text(plan_desc)]],
+            affected: 0,
+            lastrowid: None,
         })
     }
 
@@ -1310,7 +1334,7 @@ impl Executor {
             });
         }
 
-        Ok(ResultSet { columns, rows })
+        Ok(ResultSet { columns, rows, affected: 0, lastrowid: None })
     }
 
     fn exec_transaction(&mut self, op: TransactionOp) -> Result<ResultSet, String> {
