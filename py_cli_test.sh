@@ -51,21 +51,21 @@ run_test() {
 cd "$PROJECT_DIR"
 
 echo -e "${BLUE}[Basic Tests]${RESET}"
-run_test "SELECT 1" "Connected to memory" 'python -m sql5 -c "SELECT 1" 2>&1 | head -1'
-run_test "SELECT 1 result" "1$" 'python -m sql5 -c "SELECT 1 AS result" 2>&1 | tail -1'
-run_test "Multiple columns" "1 | 2 | 3" 'python -m sql5 -c "SELECT 1, 2, 3" 2>&1 | tail -1'
+run_test "SELECT 1" "Connected to memory" 'uv run python -m sql5 -c "SELECT 1" 2>&1 | head -1'
+run_test "SELECT 1 result" "1$" 'uv run python -m sql5 -c "SELECT 1 AS result" 2>&1 | tail -1'
+run_test "Multiple columns" "1 | 2 | 3" 'uv run python -m sql5 -c "SELECT 1, 2, 3" 2>&1 | tail -1'
 
 echo ""
 echo -e "${BLUE}[Table Tests]${RESET}"
-run_test "CREATE TABLE" "table created" 'python -m sql5 -c "CREATE TABLE users(id INTEGER, name TEXT)" 2>&1 | tail -1'
-run_test ".tables" "users" "python -m sql5 -c 'CREATE TABLE users(id INTEGER); .tables' 2>&1 | tail -1"
-run_test ".schema" "users" "python -m sql5 -c 'CREATE TABLE users(id INTEGER); .schema users' 2>&1 | tail -1"
+run_test "CREATE TABLE" "table created" 'uv run python -m sql5 -c "CREATE TABLE users(id INTEGER, name TEXT)" 2>&1 | tail -1'
+run_test ".tables" "users" "uv run python -m sql5 -c 'CREATE TABLE users(id INTEGER); .tables' 2>&1 | tail -1'
+run_test ".schema" "users" "uv run python -m sql5 -c 'CREATE TABLE users(id INTEGER); .schema users' 2>&1 | tail -1'
 
 echo ""
 echo -e "${BLUE}[INSERT/SELECT Tests]${RESET}"
-run_test "INSERT" "1 row(s) inserted" 'python -m sql5 -c "CREATE TABLE u(id INTEGER); INSERT INTO u VALUES(1)" 2>&1 | tail -1'
-run_test "SELECT *" "1$" 'python -m sql5 -c "CREATE TABLE u(id INTEGER); INSERT INTO u VALUES(1); SELECT * FROM u" 2>&1 | tail -1'
-run_test "SELECT id FROM u" "affected" 'python -m sql5 -c "CREATE TABLE u(id INTEGER); SELECT id FROM u" 2>&1 | tail -1'
+run_test "INSERT" "1 row(s) inserted" 'uv run python -m sql5 -c "CREATE TABLE u(id INTEGER); INSERT INTO u VALUES(1)" 2>&1 | tail -1'
+run_test "SELECT *" "1$" 'uv run python -m sql5 -c "CREATE TABLE u(id INTEGER); INSERT INTO u VALUES(1); SELECT * FROM u" 2>&1 | tail -1'
+run_test "SELECT id FROM u" "affected" 'uv run python -m sql5 -c "CREATE TABLE u(id INTEGER); SELECT id FROM u" 2>&1 | tail -1'
 
 echo ""
 echo "=============================================="

@@ -80,7 +80,7 @@ echo ""
 export SQL5_BINARY="$BINARY"
 cd "$PROJECT_DIR/sql5_pypi"
 export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
-python3 -m pytest tests/ -v 2>&1 | tail -30
+uv run pytest tests/ -v 2>&1 | tail -30
 PYTEST_STATUS=$?
 echo ""
 if [[ $PYTEST_STATUS -eq 0 ]]; then
@@ -97,7 +97,7 @@ echo -e "${BLUE}[5/6] Running Python client test...${RESET}"
 echo ""
 cd "$PROJECT_DIR/sql5_pypi/examples"
 rm -f mydb.db
-python3 sql5test.py 2>&1
+uv run python sql5test.py 2>&1
 PYCLIENT_STATUS=$?
 echo ""
 if [[ $PYCLIENT_STATUS -eq 0 ]]; then
@@ -116,7 +116,7 @@ echo ""
 cd "$PROJECT_DIR/sql5_pypi/examples"
 rm -f ws_test.db ws_test.db-wal ws_test.db-shm 2>/dev/null
 export SQL5_BINARY="$BINARY"
-python3 websocket_test.py 2>&1
+uv run python websocket_test.py 2>&1
 WEBSOCKET_STATUS=$?
 echo ""
 if [[ $WEBSOCKET_STATUS -eq 0 ]]; then

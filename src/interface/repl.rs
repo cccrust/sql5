@@ -12,6 +12,9 @@ use std::time::Instant;
 use std::collections::HashMap;
 
 use crate::fts::FtsTable;
+use crate::vector::vec_table::{VecTable, parse_columns, parse_vector_value, ColumnDef};
+use crate::vector::vector::VectorType;
+use crate::vector::functions;
 use crate::parser::parse;
 use crate::planner::planner::Planner;
 use crate::planner::{Executor, ResultSet};
@@ -22,6 +25,7 @@ use crate::table::row::Value;
 pub struct Repl {
     executor:   Executor,
     fts_tables: HashMap<String, FtsTable>,
+    vec_tables: HashMap<String, VecTable>,
     prompt:     &'static str,
     history:    Vec<String>,
     db_path:    Option<String>,
@@ -34,6 +38,7 @@ impl Repl {
         Repl {
             executor:   Executor::new(),
             fts_tables: HashMap::new(),
+            vec_tables: HashMap::new(),
             prompt:     "sql5> ",
             history:    Vec::new(),
             db_path:    None,
@@ -48,6 +53,7 @@ impl Repl {
         Ok(Repl {
             executor,
             fts_tables: HashMap::new(),
+            vec_tables: HashMap::new(),
             prompt:     "sql5> ",
             history:    Vec::new(),
             db_path:    Some(path_str),
@@ -280,35 +286,69 @@ impl Repl {
         }
     }
 
-    // ── FTS SQL 攔截 ──────────────────────────────────────────────────────
+    // ── FTS / vec0 SQL 攔截 ─────────────────────────────────────────────────
     // 處理 SQLite FTS5 相容語法：
     //   CREATE VIRTUAL TABLE t USING fts5(col1, col2)
     //   INSERT INTO t VALUES (...)
     //   SELECT * FROM t WHERE t MATCH 'query'
+    //
+    // vec0 向量表語法：
+    //   CREATE VIRTUAL TABLE t USING vec0(col float[768])
+    //   INSERT INTO t(rowid, col) VALUES (1, '[...]')
+    //   SELECT * FROM t WHERE col MATCH '[...]' LIMIT 10
 
     fn try_handle_fts(&mut self, sql: &str) -> Option<Result<ResultSet, String>> {
         let upper = sql.trim().to_uppercase();
 
-        // CREATE VIRTUAL TABLE ... USING fts5(...)
-        if upper.starts_with("CREATE VIRTUAL TABLE") {
-            return Some(self.fts_create(sql));
+        // CREATE VIRTUAL TABLE ... USING vec0(...)
+        if upper.contains("USING VEC0") || upper.contains("USING VEC0(") {
+            return Some(self.vec_create(sql));
         }
 
-        // INSERT INTO <fts_table> ...
+        // INSERT INTO <vec_table> ...
         if upper.starts_with("INSERT INTO") {
             let table_name = extract_table_name_from_insert(sql)?;
+            // 先檢查 vec0 表
+            if self.vec_tables.contains_key(&table_name) {
+                return Some(self.vec_insert(sql, &table_name));
+            }
+            // 再檢查 FTS 表
             if self.fts_tables.contains_key(&table_name) {
                 return Some(self.fts_insert(sql, &table_name));
             }
         }
 
-        // SELECT ... FROM <fts_table> WHERE <table> MATCH '...'
+        // SELECT ... FROM <table> WHERE <col> MATCH '...' (vec0 KNN 查詢)
         if upper.contains("MATCH") {
             if let Some((table_name, query)) = extract_match_query(sql) {
+                // 先檢查 vec0 表
+                if self.vec_tables.contains_key(&table_name) {
+                    return Some(self.vec_search(&table_name, &query));
+                }
+                // 再檢查 FTS 表
                 if self.fts_tables.contains_key(&table_name) {
                     return Some(self.fts_select(&table_name, &query));
                 }
             }
+        }
+
+        // 檢查是否為 vec0 表的 SELECT（可能是 FROM vec_table WHERE ...）
+        if upper.starts_with("SELECT") && upper.contains("FROM") {
+            if let Some(table_name) = extract_table_name_from_select(sql) {
+                if self.vec_tables.contains_key(&table_name) {
+                    return Some(self.vec_select(sql, &table_name));
+                }
+            }
+        }
+
+        // CREATE VIRTUAL TABLE ... USING fts5(...)
+        if upper.starts_with("CREATE VIRTUAL TABLE") && upper.contains("FTS5") {
+            return Some(self.fts_create(sql));
+        }
+
+        // 嘗試向量函數
+        if let Some(result) = self.try_handle_vec_function(sql) {
+            return Some(result);
         }
 
         None
@@ -367,6 +407,315 @@ impl Repl {
         }).collect();
 
         Ok(ResultSet { columns: out_cols, rows, affected: 0, lastrowid: None })
+    }
+
+    // ── vec0 向量表處理 ─────────────────────────────────────────────────
+
+    fn vec_create(&mut self, sql: &str) -> Result<ResultSet, String> {
+        // 解析：CREATE VIRTUAL TABLE <name> USING vec0(<col1>, <col2>, ...)
+        let lower = sql.to_lowercase();
+        let after_table = lower.find("table").ok_or("parse error")? + 5;
+        let after_using = lower.find("using").ok_or("parse error")?;
+        let name = sql[after_table..after_using].trim().to_string();
+
+        // 找到 vec0(...)
+        let after_vec0 = lower.find("vec0").ok_or("parse error")? + 4;
+        let lparen = sql[after_vec0..].find('(').ok_or("parse error")? + after_vec0;
+        let rparen = sql.rfind(')').ok_or("parse error")?;
+        let cols_str = &sql[lparen+1..rparen];
+
+        let columns = parse_columns(cols_str)?;
+        self.vec_tables.insert(name.clone(), VecTable::new(&name, columns));
+        Ok(ResultSet::ok_msg("vec0 virtual table created"))
+    }
+
+    fn vec_insert(&mut self, sql: &str, table_name: &str) -> Result<ResultSet, String> {
+        let table = self.vec_tables.get_mut(table_name).ok_or("table not found")?;
+
+        // 解析 INSERT INTO t(rowid, col) VALUES (1, '[...]')
+        let lower = sql.to_lowercase();
+        let after_into = lower.find("into").ok_or("parse error")? + 4;
+        let after_name = after_into + table_name.len() + 1;
+        // For searching, use lower; for extracting values, use original sql
+        let rest_lower = &lower[after_name..];
+        let rest_original = &sql[after_name..];
+
+        // 解析 column list (use original to preserve case)
+        let lparen = rest_original.find('(').ok_or("no column list")?;
+        let rparen = rest_original.find(')').ok_or("no values")?;
+        let col_list = &rest_original[lparen+1..rparen];
+        let cols: Vec<&str> = col_list.split(',').map(|s| s.trim()).collect();
+
+        // 解析 values (search in lower, extract from original)
+        let values_pos = rest_lower.find("values");
+        let after_values = values_pos.ok_or("parse error")? + 6;
+        let original_after_values = after_values;
+        let lparen2 = rest_original[original_after_values..].find('(');
+        let lparen2 = lparen2.ok_or("parse error")? + original_after_values;
+        let rparen2 = rest_original.rfind(')').ok_or("parse error")?;
+        let vals_str = &rest_original[lparen2+1..rparen2];
+
+        let values: Vec<String> = split_sql_values(vals_str);
+        if values.len() != cols.len() {
+            return Err("column count mismatch".to_string());
+        }
+
+        // 找出向量欄位和其他欄位
+        let vector_col_idx = table.columns.iter()
+            .position(|c| matches!(c, ColumnDef::Vector { .. }));
+
+        let mut rowid: Option<u64> = None;
+        let mut vector: Option<VectorType> = None;
+        let mut metadata = std::collections::HashMap::new();
+        let mut auxiliary = std::collections::HashMap::new();
+
+        for (i, col) in cols.iter().enumerate() {
+            let value = &values[i];
+            let col_lower = col.to_lowercase();
+
+            if col_lower == "rowid" {
+                rowid = Some(value.parse().map_err(|_| "invalid rowid")?);
+            } else if let Some(vec_idx) = vector_col_idx {
+                if let ColumnDef::Vector { name, .. } = &table.columns[vec_idx] {
+                    if col_lower == name.to_lowercase() {
+                        vector = Some(parse_vector_value(value)?);
+                        continue;
+                    }
+                }
+            }
+
+            // 其他欄位視為元資料或輔助欄位
+            for col_def in &table.columns {
+                match col_def {
+                    ColumnDef::Metadata { name, .. } if name.to_lowercase() == col_lower => {
+                        metadata.insert(name.clone(), value.trim_matches('\'').to_string());
+                    }
+                    ColumnDef::Auxiliary { name, .. } if name.to_lowercase() == col_lower => {
+                        auxiliary.insert(name.clone(), value.trim_matches('\'').to_string());
+                    }
+                    ColumnDef::PartitionKey { name, .. } if name.to_lowercase() == col_lower => {
+                        metadata.insert(name.clone(), value.trim_matches('\'').to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let vector = vector.ok_or("vector column not found")?;
+        table.insert(rowid, vector, metadata, auxiliary);
+        Ok(ResultSet::ok_msg("1 row(s) inserted"))
+    }
+
+    fn vec_search(&mut self, table_name: &str, query: &str) -> Result<ResultSet, String> {
+        let table: &mut VecTable = self.vec_tables.get_mut(table_name).ok_or("table not found")?;
+
+        // 解析 query 為向量
+        let query_vector = parse_vector_value(query.trim().trim_matches('\''))?;
+
+        // 解析 LIMIT
+        let k = 10;
+
+        let results = table.search(&query_vector, k, &std::collections::HashMap::new());
+
+        let rows: Vec<Vec<Value>> = results.into_iter().map(|(rowid, distance)| {
+            vec![Value::Integer(rowid as i64), Value::Float(distance)]
+        }).collect();
+
+        Ok(ResultSet {
+            columns: vec!["rowid".to_string(), "distance".to_string()],
+            rows,
+            affected: 0,
+            lastrowid: None
+        })
+    }
+
+    fn vec_select(&mut self, sql: &str, table_name: &str) -> Result<ResultSet, String> {
+        let table = self.vec_tables.get(table_name).ok_or("table not found")?;
+        let upper = sql.to_uppercase();
+
+        // 解析 KNN 查詢：WHERE col MATCH '[...]' LIMIT N
+        let mut query_vector: Option<VectorType> = None;
+        let mut k = 10;
+
+        // 找 MATCH 子句
+        if let Some(match_pos) = upper.find("MATCH") {
+            let after_match = &sql[match_pos + 5..];
+            if let Some(quote_pos) = after_match.find('\'') {
+                let after_quote = &after_match[quote_pos + 1..];
+                if let Some(end_quote) = after_quote.find('\'') {
+                    let query_str = &after_quote[..end_quote];
+                    query_vector = Some(parse_vector_value(query_str)?);
+                }
+            }
+        }
+
+        // 找 LIMIT
+        if let Some(limit_pos) = upper.find("LIMIT") {
+            let after_limit = &sql[limit_pos + 5..];
+            let limit_str = after_limit.split_whitespace().next().unwrap_or("10");
+            k = limit_str.parse().unwrap_or(10);
+        }
+
+        let query_vector = query_vector.ok_or("no query vector found")?;
+        let results = table.search(&query_vector, k, &std::collections::HashMap::new());
+
+        // 建立結果
+        let mut out_cols = vec!["rowid".to_string(), "distance".to_string()];
+
+        // 加入元資料欄位名稱
+        for col in &table.columns {
+            match col {
+                ColumnDef::Metadata { name, .. } => out_cols.push(name.clone()),
+                ColumnDef::PartitionKey { name, .. } => out_cols.push(name.clone()),
+                _ => {}
+            }
+        }
+
+        let rows: Vec<Vec<Value>> = results.into_iter().map(|(rowid, distance)| {
+            let mut row = vec![Value::Integer(rowid as i64), Value::Float(distance)];
+
+            // 加入元資料
+            if let Some(meta) = table.get_metadata(rowid) {
+                for col in &table.columns {
+                    match col {
+                        ColumnDef::Metadata { name, .. } => {
+                            row.push(Value::Text(meta.get(name).cloned().unwrap_or_default()));
+                        }
+                        ColumnDef::PartitionKey { name, .. } => {
+                            row.push(Value::Text(meta.get(name).cloned().unwrap_or_default()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            row
+        }).collect();
+
+        Ok(ResultSet { columns: out_cols, rows, affected: 0, lastrowid: None })
+    }
+
+    fn try_handle_vec_function(&mut self, sql: &str) -> Option<Result<ResultSet, String>> {
+        let upper = sql.trim().to_uppercase();
+
+        // vec_f32('[...]')
+        if upper.starts_with("SELECT VEC_F32") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let arg = &sql[start..end];
+            match functions::vec_f32(arg) {
+                Ok(hex) => Some(Ok(ResultSet {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::Text(hex)]],
+                    affected: 0,
+                    lastrowid: None,
+                })),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        // vec_to_json('...')
+        else if upper.starts_with("SELECT VEC_TO_JSON") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let arg = &sql[start..end];
+            match functions::vec_to_json(arg) {
+                Ok(json) => Some(Ok(ResultSet {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::Text(json)]],
+                    affected: 0,
+                    lastrowid: None,
+                })),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        // vec_length('...')
+        else if upper.starts_with("SELECT VEC_LENGTH") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let arg = &sql[start..end];
+            match functions::vec_length(arg) {
+                Ok(len) => Some(Ok(ResultSet {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::Integer(len as i64)]],
+                    affected: 0,
+                    lastrowid: None,
+                })),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        // vec_distance_L2(a, b)
+        else if upper.starts_with("SELECT VEC_DISTANCE_L2") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let args = &sql[start..end];
+            let parts: Vec<&str> = args.split(',').collect();
+            if parts.len() == 2 {
+                match functions::vec_distance_l2(parts[0].trim(), parts[1].trim()) {
+                    Ok(d) => Some(Ok(ResultSet {
+                        columns: vec!["distance".to_string()],
+                        rows: vec![vec![Value::Float(d)]],
+                        affected: 0,
+                        lastrowid: None,
+                    })),
+                    Err(e) => Some(Err(e)),
+                }
+            } else {
+                None
+            }
+        }
+        // vec_distance_cosine(a, b)
+        else if upper.starts_with("SELECT VEC_DISTANCE_COSINE") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let args = &sql[start..end];
+            let parts: Vec<&str> = args.split(',').collect();
+            if parts.len() == 2 {
+                match functions::vec_distance_cosine(parts[0].trim(), parts[1].trim()) {
+                    Ok(d) => Some(Ok(ResultSet {
+                        columns: vec!["distance".to_string()],
+                        rows: vec![vec![Value::Float(d)]],
+                        affected: 0,
+                        lastrowid: None,
+                    })),
+                    Err(e) => Some(Err(e)),
+                }
+            } else {
+                None
+            }
+        }
+        // vec_normalize('...')
+        else if upper.starts_with("SELECT VEC_NORMALIZE") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let arg = &sql[start..end];
+            match functions::vec_normalize(arg) {
+                Ok(hex) => Some(Ok(ResultSet {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::Text(hex)]],
+                    affected: 0,
+                    lastrowid: None,
+                })),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        // vec_quantize_binary('...')
+        else if upper.starts_with("SELECT VEC_QUANTIZE_BINARY") {
+            let start = sql.find('(')? + 1;
+            let end = sql.rfind(')')?;
+            let arg = &sql[start..end];
+            match functions::vec_quantize_binary(arg) {
+                Ok(hex) => Some(Ok(ResultSet {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::Text(hex)]],
+                    affected: 0,
+                    lastrowid: None,
+                })),
+                Err(e) => Some(Err(e)),
+            }
+        }
+        else {
+            None
+        }
     }
 
     // ── Banner & Help ────────────────────────────────────────────────────
@@ -462,12 +811,27 @@ fn extract_table_name_from_insert(sql: &str) -> Option<String> {
 }
 
 fn extract_match_query(sql: &str) -> Option<(String, String)> {
-    // SELECT * FROM t WHERE t MATCH 'query'
+    // vec0 語法: SELECT * FROM t WHERE col MATCH 'query'
+    // FTS5 語法: SELECT * FROM t WHERE t MATCH 'query'
     let lower = sql.to_lowercase();
     let match_pos = lower.find("match")?;
     let after_match = sql[match_pos + 5..].trim();
 
-    // 取得 MATCH 前的表名
+    // 先嘗試 FROM 子句中的表名（vec0 用這個）
+    if let Some(from_pos) = lower.find("from") {
+        let after_from = &sql[from_pos + 4..];
+        let table_name: String = after_from.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !table_name.is_empty() {
+            let query = after_match.trim_matches(|c| c == '\'' || c == '"' || c == ';').to_string();
+            if !query.is_empty() {
+                return Some((table_name, query));
+            }
+        }
+    }
+
+    // 向後相容：取得 MATCH 前的表名（FTS5 用這個）
     let where_pos = lower.find("where")?;
     let between = sql[where_pos + 5..match_pos].trim();
     let table_name: String = between.chars()
@@ -478,6 +842,28 @@ fn extract_match_query(sql: &str) -> Option<(String, String)> {
     let query = after_match.trim_matches(|c| c == '\'' || c == '"' || c == ';').to_string();
     if table_name.is_empty() || query.is_empty() { return None; }
     Some((table_name, query))
+}
+
+fn extract_table_name_from_select(sql: &str) -> Option<String> {
+    // SELECT * FROM table_name WHERE ...
+    let lower = sql.to_lowercase();
+    let from_pos = lower.find("from")? + 4;
+    let rest = sql[from_pos..].trim();
+
+    // 找下一個關鍵字或空白結束
+    let keywords = ["where", "order", "limit", "group", "having"];
+    let mut end_pos = rest.len();
+    for kw in &keywords {
+        if let Some(pos) = rest.to_lowercase().find(kw) {
+            if pos < end_pos {
+                end_pos = pos;
+            }
+        }
+    }
+
+    let name = rest[..end_pos].trim();
+    let name: String = name.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// 簡單解析 SQL VALUES 內的逗號分隔值（去引號）

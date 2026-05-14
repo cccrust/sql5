@@ -96,7 +96,9 @@ function do_pypi() {
     rm -rf dist build *.egg-info
 
     echo "Build Python package..."
-    python -m build
+    cd "$PROJECT_DIR/sql5_pypi"
+    uv pip install build
+    uv run python -m build
 
     echo "上傳到 PyPI..."
     if [[ -n "${PYPI_TOKEN:-}" ]]; then

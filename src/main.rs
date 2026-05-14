@@ -16,6 +16,7 @@ mod pager;    // 分頁管理與儲存引擎
 mod parser;   // SQL 語法解析
 mod planner;  // 查詢規劃與執行
 mod table;    // 表格管理
+mod vector;   // 向量搜尋 (v4.0)
 
 use interface::{Repl, Server, WsServer};
 use std::env::{self, Args};

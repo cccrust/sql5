@@ -37,5 +37,5 @@ export PYTHONPATH="${PYTHON_DIR}:${PYTHONPATH:-}"
 
 # Run pytest integration tests
 cd "$PYTHON_DIR"
-python3 -m pytest tests/test_sql5.py -v
+uv run pytest tests/test_sql5.py -v
 exit $?

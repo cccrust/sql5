@@ -33,7 +33,7 @@ echo ""
 
 cd "$PROJECT_DIR/sql5_pypi"
 
-exec python -c "
+exec uv run python -c "
 import sys
 import os
 import asyncio

@@ -1,3 +1,5 @@
 set -x
-pip install --force-reinstall sql5
-python sql5test.py
+cd "$(dirname "$0")/.."
+uv pip install -e .
+cd examples
+uv run python sql5test.py
