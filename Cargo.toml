@@ -1,15 +1,17 @@
 [package]
 name = "sql5"
-version = "3.7.1"
+version = "4.0.2"
 edition = "2024"
-description = "SQLite compatible database with CJK FTS5 full-text search"
+description = "SQLite compatible database with CJK FTS5 full-text search and vector similarity"
 license = "MIT"
 
 [package.metadata]
 exclude = [".DS_Store"]
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+hex = "0.4"
